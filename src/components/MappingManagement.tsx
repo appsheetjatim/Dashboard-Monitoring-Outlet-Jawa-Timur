@@ -22,7 +22,11 @@ import {
   ChevronRight,
   ArrowRight,
   FileSpreadsheet,
+  FileDown,
   Store,
+  ArrowUpDown,
+  ChevronUp,
+  ChevronDown,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
@@ -49,6 +53,8 @@ export const MappingManagement: React.FC = () => {
   const [filterRing, setFilterRing] = useState('ALL');
   const [filterPosm, setFilterPosm] = useState('ALL');
   const [filterMds, setFilterMds] = useState('ALL');
+  const [filterKabupaten, setFilterKabupaten] = useState('ALL');
+  const [filterKecamatan, setFilterKecamatan] = useState('ALL');
 
   // Modal Wizard State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -110,7 +116,11 @@ export const MappingManagement: React.FC = () => {
   const [formError, setFormError] = useState<string | null>(null);
 
   // Bulk import state
-  const [importStatus, setImportStatus] = useState<string | null>(null);
+  const [importResult, setImportResult] = useState<{
+    successCount: number;
+    failed: { row: number; reason: string }[];
+  } | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
 
   // Filtered Mappings list
   const filteredMappings = useMemo(() => {
@@ -128,6 +138,8 @@ export const MappingManagement: React.FC = () => {
       if (filterDepo !== 'ALL' && m.depoBsp !== filterDepo) return false;
       if (filterRing !== 'ALL' && m.klasifikasiOutlet !== filterRing) return false;
       if (filterMds !== 'ALL' && m.namaMds !== filterMds) return false;
+      if (filterKabupaten !== 'ALL' && m.kabupaten !== filterKabupaten) return false;
+      if (filterKecamatan !== 'ALL' && m.kecamatan !== filterKecamatan) return false;
 
       if (filterPosm === 'dishub' && !m.dishub) return false;
       if (filterPosm === 'rak' && !m.rak50cm && !m.rak65cm && !m.rak75cm && !m.rakDuaSisi && !m.rakPack && !m.rakCustome) return false;
@@ -144,12 +156,85 @@ export const MappingManagement: React.FC = () => {
 
       return true;
     });
-  }, [mappings, isManager, accessibleDistributors, filterDepo, filterRing, filterMds, filterPosm, searchQuery]);
+  }, [
+    mappings,
+    isManager,
+    accessibleDistributors,
+    accessibleDepo,
+    filterDepo,
+    filterRing,
+    filterMds,
+    filterKabupaten,
+    filterKecamatan,
+    filterPosm,
+    searchQuery,
+  ]);
+
+  // Sorting for the Daftar Mapping Outlet table
+  type MapSortField = 'ring' | 'name' | 'code' | 'bsp' | 'udn' | 'mds';
+  const [mapSortField, setMapSortField] = useState<MapSortField>('name');
+  const [mapSortDirection, setMapSortDirection] = useState<'asc' | 'desc'>('asc');
+
+  const handleMapSort = (field: MapSortField) => {
+    if (mapSortField === field) {
+      setMapSortDirection((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setMapSortField(field);
+      setMapSortDirection('asc');
+    }
+  };
+
+  const sortedMappings = useMemo(() => {
+    const dir = mapSortDirection === 'asc' ? 1 : -1;
+    return [...filteredMappings].sort((a, b) => {
+      switch (mapSortField) {
+        case 'ring':
+          return a.klasifikasiOutlet.localeCompare(b.klasifikasiOutlet) * dir;
+        case 'code':
+          return a.customerSoGroupAreaCode.localeCompare(b.customerSoGroupAreaCode) * dir;
+        case 'bsp':
+          return (a.namaCustomerBsp || '').localeCompare(b.namaCustomerBsp || '') * dir;
+        case 'udn':
+          return (a.namaCustomerUdn || '').localeCompare(b.namaCustomerUdn || '') * dir;
+        case 'mds':
+          return (a.namaMds || '').localeCompare(b.namaMds || '') * dir;
+        case 'name':
+        default:
+          return a.customerSoGroupArea.localeCompare(b.customerSoGroupArea) * dir;
+      }
+    });
+  }, [filteredMappings, mapSortField, mapSortDirection]);
+
+  const SortIcon: React.FC<{ field: MapSortField }> = ({ field }) => {
+    if (mapSortField !== field) return <ArrowUpDown className="w-3 h-3 text-slate-300" />;
+    return mapSortDirection === 'asc' ? (
+      <ChevronUp className="w-3 h-3 text-indigo-600" />
+    ) : (
+      <ChevronDown className="w-3 h-3 text-indigo-600" />
+    );
+  };
 
   // Unique options for filter
+  // Access-restricted base used to derive filter dropdown options, so a
+  // Supervisor never sees Depo/Kabupaten/Kecamatan options outside their area.
+  const accessRestrictedMappings = useMemo(() => {
+    if (isManager || accessibleDepo.length === 0) return mappings;
+    return mappings.filter(
+      (m) => accessibleDepo.includes(m.depoBsp) || accessibleDepo.includes(m.subDistUdn)
+    );
+  }, [mappings, isManager, accessibleDepo]);
+
   const depoOptions = useMemo(() => {
-    return Array.from(new Set(mappings.map((m) => m.depoBsp).filter(Boolean)));
-  }, [mappings]);
+    return Array.from(new Set(accessRestrictedMappings.map((m) => m.depoBsp).filter(Boolean)));
+  }, [accessRestrictedMappings]);
+
+  const kabupatenOptions = useMemo(() => {
+    return Array.from(new Set(accessRestrictedMappings.map((m) => m.kabupaten).filter(Boolean))).sort();
+  }, [accessRestrictedMappings]);
+
+  const kecamatanOptions = useMemo(() => {
+    return Array.from(new Set(accessRestrictedMappings.map((m) => m.kecamatan).filter(Boolean))).sort();
+  }, [accessRestrictedMappings]);
 
   const mdsOptions = useMemo(() => {
     if (!isManager) return Array.from(new Set(accessibleMds.map((m) => m.namaMds).filter(Boolean)));
@@ -157,13 +242,26 @@ export const MappingManagement: React.FC = () => {
   }, [mappings, isManager, accessibleMds]);
 
   // Wizard Step 1: base pool already restricted to the logged-in PIC's Depo access
+  // All codes (BSP + UDN, Code 1/2/3) already used by an active mapping —
+  // these outlets are excluded from Step 1's picker since they're already mapped.
+  const allMappedCodes = useMemo(() => {
+    const set = new Set<string>();
+    mappings.forEach((m) => {
+      if (m.status !== 'Active') return;
+      [m.bspCode1, m.bspCode2, m.bspCode3, m.udnCode1, m.udnCode2, m.udnCode3].forEach(
+        (c) => c && set.add(c)
+      );
+    });
+    return set;
+  }, [mappings]);
+
   const wizardBasePool = useMemo(() => {
-    let pool = performance.filter((p) => p.dist === primaryDist);
+    let pool = performance.filter((p) => p.dist === primaryDist && !allMappedCodes.has(p.kodeCustNfiGroup));
     if (!isManager && accessibleDepo.length > 0) {
       pool = pool.filter((p) => accessibleDepo.includes(p.depo));
     }
     return pool;
-  }, [performance, primaryDist, isManager, accessibleDepo]);
+  }, [performance, primaryDist, isManager, accessibleDepo, allMappedCodes]);
 
   // Cascading filter dropdown options (Sub Dist -> Depo -> Kabupaten -> Kecamatan)
   const wizardSubDistOptions = useMemo(
@@ -237,7 +335,9 @@ export const MappingManagement: React.FC = () => {
   const matchingCandidates = useMemo(() => {
     if (!selectedPrimaryOutlet) return [];
     const targetDist = primaryDist === 'BSP' ? 'UDN' : 'BSP';
-    let targetOutlets = performance.filter((p) => p.dist === targetDist);
+    let targetOutlets = performance.filter(
+      (p) => p.dist === targetDist && !allMappedCodes.has(p.kodeCustNfiGroup)
+    );
     // Restrict candidate pool to the logged-in PIC's accessible Depo — otherwise
     // a Supervisor gets pairing suggestions from anywhere in Jawa Timur, which
     // also produces geographically nonsensical matches (different cities).
@@ -245,7 +345,7 @@ export const MappingManagement: React.FC = () => {
       targetOutlets = targetOutlets.filter((p) => accessibleDepo.includes(p.depo));
     }
     return findCandidateMatches(selectedPrimaryOutlet, targetOutlets);
-  }, [selectedPrimaryOutlet, primaryDist, performance, isManager, accessibleDepo]);
+  }, [selectedPrimaryOutlet, primaryDist, performance, isManager, accessibleDepo, allMappedCodes]);
 
   // Manual pairing search: same access-restricted pool as the recommendation
   // engine, but user-driven by free text — for cases where the top-5 auto
@@ -254,7 +354,9 @@ export const MappingManagement: React.FC = () => {
   const manualPairResults = useMemo(() => {
     if (!selectedPrimaryOutlet || !manualPairSearch.trim()) return [];
     const targetDist = primaryDist === 'BSP' ? 'UDN' : 'BSP';
-    let pool = performance.filter((p) => p.dist === targetDist);
+    let pool = performance.filter(
+      (p) => p.dist === targetDist && !allMappedCodes.has(p.kodeCustNfiGroup)
+    );
     if (!isManager && accessibleDepo.length > 0) {
       pool = pool.filter((p) => accessibleDepo.includes(p.depo));
     }
@@ -263,7 +365,7 @@ export const MappingManagement: React.FC = () => {
       (p) => p.namaCustomerBaru.toLowerCase().includes(q) || p.kodeCustNfiGroup.toLowerCase().includes(q)
     );
     return pool.slice(0, MANUAL_PAIR_MAX_RESULTS);
-  }, [selectedPrimaryOutlet, primaryDist, performance, isManager, accessibleDepo, manualPairSearch]);
+  }, [selectedPrimaryOutlet, primaryDist, performance, isManager, accessibleDepo, manualPairSearch, allMappedCodes]);
 
   // Handle picking a pairing manually (bypassing the top-5 algorithm)
   const handleSelectManualPair = (outlet: OutletPerformance) => {
@@ -626,10 +728,45 @@ export const MappingManagement: React.FC = () => {
     XLSX.writeFile(wb, 'Data_Mapping_Outlet_POSM.xlsx');
   };
 
-  // Bulk Import handler
+  // Download a blank Excel template with the correct headers + 1 example row
+  const handleDownloadTemplate = () => {
+    const exampleRow = {
+      'BSP Code 1': 'B200011569.0605.M030',
+      'UDN Code 1': 'D200231481.CS024001159',
+      'BSP Code 2': '',
+      'BSP Code 3': '',
+      'UDN Code 2': '',
+      'UDN Code 3': '',
+      Klasifikasi: 'Ring 1',
+      Dishub: 'No',
+      'Rak 50cm': 'Yes',
+      'Rak 65cm': 'No',
+      'Rak 75cm': 'No',
+      'Rak Dua Sisi': 'No',
+      'Rak Pack': 'No',
+      'Rak Custome': 'No',
+      'Display Wow All': 'Yes',
+      'Biaya Wow All': 4,
+      'Display Wow Hilo': 'Yes',
+      'Biaya Wow Hilo': 4,
+      'Nama MDS': accessibleMds[0]?.namaMds || 'Nama MDS',
+      PIC: currentUser?.namaPic || 'Nama PIC',
+      Notes: '',
+    };
+    const ws = XLSX.utils.json_to_sheet([exampleRow]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Template Mapping');
+    XLSX.writeFile(wb, 'Template_Bulk_Upload_Mapping.xlsx');
+  };
+
+  // Bulk Import handler — looks up descriptive data from Performance by code,
+  // validates every row, and skips only the rows that fail (with a reason),
+  // rather than aborting the whole batch or importing broken data.
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setImportResult(null);
+    setIsImporting(true);
 
     const reader = new FileReader();
     reader.onload = async (evt) => {
@@ -640,50 +777,209 @@ export const MappingManagement: React.FC = () => {
         const json: any[] = XLSX.utils.sheet_to_json(ws);
 
         if (json.length === 0) {
-          alert('File kosong.');
+          setImportResult({ successCount: 0, failed: [{ row: 0, reason: 'File kosong.' }] });
+          setIsImporting(false);
           return;
         }
 
-        const itemsToImport = json.map((r) => ({
-          customerSoGroupAreaCode: r['Customer SO Group Area Code'] || `JWTM-R2-00-OUTLET`,
-          customerSoGroupArea: r['Customer SO Group Area'] || r['Nama Customer BSP'] || 'Outlet Baru',
-          klasifikasiOutlet: (r['Klasifikasi'] || 'Ring 2') as any,
-          subDistBsp: r['Sub Dist BSP'] || '',
-          depoBsp: r['Depo BSP'] || '',
-          namaCustomerBsp: r['Nama Customer BSP'] || '',
-          bspCode1: String(r['BSP Code 1'] || ''),
-          bspCode2: String(r['BSP Code 2'] || ''),
-          bspCode3: String(r['BSP Code 3'] || ''),
-          subDistUdn: r['Sub Dist UDN'] || '',
-          namaCustomerUdn: r['Nama Customer UDN'] || '',
-          udnCode1: String(r['UDN Code 1'] || ''),
-          udnCode2: String(r['UDN Code 2'] || ''),
-          udnCode3: String(r['UDN Code 3'] || ''),
-          kabupaten: r['Kabupaten'] || '',
-          kecamatan: r['Kecamatan'] || '',
-          alamat: r['Alamat'] || '',
-          dishub: String(r['Dishub']).toLowerCase() === 'yes' || r['Dishub'] === true,
-          rak50cm: String(r['Rak 50cm']).toLowerCase() === 'yes',
-          rak65cm: String(r['Rak 65cm']).toLowerCase() === 'yes',
-          rak75cm: String(r['Rak 75cm']).toLowerCase() === 'yes',
-          rakDuaSisi: String(r['Rak Dua Sisi']).toLowerCase() === 'yes',
-          rakPack: String(r['Rak Pack']).toLowerCase() === 'yes',
-          rakCustome: String(r['Rak Custome']).toLowerCase() === 'yes',
-          displayWowAll: String(r['Display Wow All']).toLowerCase() === 'yes',
-          biayaDisplayWow: Number(r['Biaya Wow All']) || 0,
-          displayWowHilo: String(r['Display Wow Hilo']).toLowerCase() === 'yes',
-          biayaDisplayWowHilo: Number(r['Biaya Wow Hilo']) || 0,
-          namaMds: r['Nama MDS'] || '',
-          pic: r['PIC'] || currentUser?.namaPic || '',
-          status: 'Active' as const,
-          notes: r['Notes'] || '',
-        }));
+        const VALID_RINGS = ['Ring 1', 'Ring 2', 'Ring 3', 'Ring 4'];
+        const parseYesNo = (v: any): boolean | null => {
+          const s = String(v ?? '').trim().toLowerCase();
+          if (s === 'yes') return true;
+          if (s === 'no' || s === '') return false;
+          return null; // ambiguous / invalid value
+        };
 
-        const res = await bulkImportMappings(itemsToImport);
-        setImportStatus(`Berhasil mengimpor ${res.successCount} data mapping baru!`);
-        setTimeout(() => setImportStatus(null), 4000);
+        // Existing codes already used by other active mappings (never duplicate)
+        const codesUsedElsewhere = new Set<string>();
+        mappings.forEach((m) => {
+          [m.bspCode1, m.bspCode2, m.bspCode3, m.udnCode1, m.udnCode2, m.udnCode3].forEach(
+            (c) => c && codesUsedElsewhere.add(c)
+          );
+        });
+        // Codes claimed within this same file (prevent intra-file duplicates)
+        const codesClaimedInFile = new Set<string>();
+
+        const validItems: Array<Omit<OutletMapping, 'mappingId' | 'mappingDate' | 'lastUpdated'>> = [];
+        const failed: { row: number; reason: string }[] = [];
+
+        json.forEach((r, idx) => {
+          const rowNum = idx + 2; // +2: header row + 1-indexed
+          const bspCode1Raw = String(r['BSP Code 1'] || '').trim();
+          const udnCode1Raw = String(r['UDN Code 1'] || '').trim();
+
+          if (!bspCode1Raw && !udnCode1Raw) {
+            failed.push({ row: rowNum, reason: 'BSP Code 1 atau UDN Code 1 wajib diisi salah satu.' });
+            return;
+          }
+
+          let bspOutlet: OutletPerformance | undefined;
+          if (bspCode1Raw) {
+            bspOutlet = performance.find((p) => p.dist === 'BSP' && p.kodeCustNfiGroup === bspCode1Raw);
+            if (!bspOutlet) {
+              failed.push({ row: rowNum, reason: `BSP Code 1 "${bspCode1Raw}" tidak ditemukan di data Performance.` });
+              return;
+            }
+          }
+
+          let udnOutlet: OutletPerformance | undefined;
+          if (udnCode1Raw) {
+            udnOutlet = performance.find((p) => p.dist === 'UDN' && p.kodeCustNfiGroup === udnCode1Raw);
+            if (!udnOutlet) {
+              failed.push({ row: rowNum, reason: `UDN Code 1 "${udnCode1Raw}" tidak ditemukan di data Performance.` });
+              return;
+            }
+          }
+
+          // Access control: non-Manager can only import into their own Depo
+          if (!isManager && accessibleDepo.length > 0) {
+            const depoOk =
+              (bspOutlet && accessibleDepo.includes(bspOutlet.depo)) ||
+              (udnOutlet && accessibleDepo.includes(udnOutlet.depo));
+            if (!depoOk) {
+              failed.push({ row: rowNum, reason: 'Depo outlet ini di luar akses Anda.' });
+              return;
+            }
+          }
+
+          const klasifikasiRaw = String(r['Klasifikasi'] || '').trim();
+          if (!VALID_RINGS.includes(klasifikasiRaw)) {
+            failed.push({ row: rowNum, reason: `Klasifikasi "${klasifikasiRaw}" tidak valid — harus Ring 1/2/3/4.` });
+            return;
+          }
+          const klasifikasiVal = klasifikasiRaw as OutletMapping['klasifikasiOutlet'];
+          const isRing1Row = klasifikasiVal === 'Ring 1';
+
+          // POSM & Display Wow: mandatory Yes/No only for Ring 1 rows
+          let dishub = false, rak50cm = false, rak65cm = false, rak75cm = false;
+          let rakDuaSisi = false, rakPack = false, rakCustome = false;
+          let displayWowAll = false, displayWowHilo = false;
+          let biayaDisplayWow = 0, biayaDisplayWowHilo = 0;
+
+          if (isRing1Row) {
+            const posmFields: [string, string][] = [
+              ['Dishub', 'Dishub'], ['Rak 50cm', 'Rak 50 cm'], ['Rak 65cm', 'Rak 65 cm'],
+              ['Rak 75cm', 'Rak 75 cm'], ['Rak Dua Sisi', 'Rak Dua Sisi'],
+              ['Rak Pack', 'Rak Pack'], ['Rak Custome', 'Rak Custome'],
+              ['Display Wow All', 'Display Wow All'], ['Display Wow Hilo', 'Display Wow Hilo'],
+            ];
+            const parsed: Record<string, boolean> = {};
+            let posmError = '';
+            for (const [col, label] of posmFields) {
+              const val = parseYesNo(r[col]);
+              if (val === null) {
+                posmError = `Kolom "${label}" harus diisi Yes atau No (outlet Ring 1).`;
+                break;
+              }
+              parsed[col] = val;
+            }
+            if (posmError) {
+              failed.push({ row: rowNum, reason: posmError });
+              return;
+            }
+            dishub = parsed['Dishub'];
+            rak50cm = parsed['Rak 50cm'];
+            rak65cm = parsed['Rak 65cm'];
+            rak75cm = parsed['Rak 75cm'];
+            rakDuaSisi = parsed['Rak Dua Sisi'];
+            rakPack = parsed['Rak Pack'];
+            rakCustome = parsed['Rak Custome'];
+            displayWowAll = parsed['Display Wow All'];
+            displayWowHilo = parsed['Display Wow Hilo'];
+
+            if (displayWowAll) {
+              const biaya = Number(r['Biaya Wow All']);
+              if (r['Biaya Wow All'] === undefined || r['Biaya Wow All'] === '' || isNaN(biaya)) {
+                failed.push({ row: rowNum, reason: 'Biaya Wow All wajib diisi angka karena Display Wow All = Yes.' });
+                return;
+              }
+              biayaDisplayWow = biaya;
+            }
+            if (displayWowHilo) {
+              const biaya = Number(r['Biaya Wow Hilo']);
+              if (r['Biaya Wow Hilo'] === undefined || r['Biaya Wow Hilo'] === '' || isNaN(biaya)) {
+                failed.push({ row: rowNum, reason: 'Biaya Wow Hilo wajib diisi angka karena Display Wow Hilo = Yes.' });
+                return;
+              }
+              biayaDisplayWowHilo = biaya;
+            }
+          }
+          // Non-Ring-1 rows: POSM/Display Wow stay false/0 regardless of file content
+
+          const namaMdsRaw = String(r['Nama MDS'] || '').trim();
+          if (!namaMdsRaw) {
+            failed.push({ row: rowNum, reason: 'Nama MDS wajib diisi.' });
+            return;
+          }
+          const mdsMatch = accessibleMds.find((m) => m.namaMds.toLowerCase() === namaMdsRaw.toLowerCase());
+          if (!mdsMatch) {
+            failed.push({ row: rowNum, reason: `MDS "${namaMdsRaw}" tidak ditemukan / bukan MDS Anda.` });
+            return;
+          }
+
+          const picRaw = String(r['PIC'] || '').trim();
+          if (!picRaw) {
+            failed.push({ row: rowNum, reason: 'PIC wajib diisi.' });
+            return;
+          }
+          if (!isManager && picRaw.toLowerCase() !== (currentUser?.namaPic || '').toLowerCase()) {
+            failed.push({ row: rowNum, reason: `PIC "${picRaw}" harus sama dengan akun Anda yang login.` });
+            return;
+          }
+
+          // Duplicate-code check (against existing mappings AND within this file)
+          const codesInRow = [bspCode1Raw, udnCode1Raw].filter(Boolean);
+          const dupe = codesInRow.find(
+            (c) => codesUsedElsewhere.has(c) || codesClaimedInFile.has(c)
+          );
+          if (dupe) {
+            failed.push({ row: rowNum, reason: `Kode "${dupe}" sudah dipakai di mapping lain atau duplikat dalam file ini.` });
+            return;
+          }
+          codesInRow.forEach((c) => codesClaimedInFile.add(c));
+
+          // Lookup descriptive fields from Performance — BSP side preferred as source of truth
+          const primary = bspOutlet || udnOutlet!;
+          const nameForCode = bspOutlet?.namaCustomerBaru || udnOutlet?.namaCustomerBaru || 'Outlet';
+          const generatedCodeRow = generateCustomerSoGroupAreaCode(nameForCode, klasifikasiVal);
+
+          validItems.push({
+            customerSoGroupAreaCode: generatedCodeRow,
+            customerSoGroupArea: nameForCode,
+            klasifikasiOutlet: klasifikasiVal,
+            subDistBsp: bspOutlet?.subDist || '',
+            depoBsp: bspOutlet?.depo || '',
+            namaCustomerBsp: bspOutlet?.namaCustomerBaru || '',
+            bspCode1: bspCode1Raw,
+            bspCode2: String(r['BSP Code 2'] || ''),
+            bspCode3: String(r['BSP Code 3'] || ''),
+            subDistUdn: udnOutlet?.subDist || '',
+            namaCustomerUdn: udnOutlet?.namaCustomerBaru || '',
+            udnCode1: udnCode1Raw,
+            udnCode2: String(r['UDN Code 2'] || ''),
+            udnCode3: String(r['UDN Code 3'] || ''),
+            kabupaten: primary.kabupaten,
+            kecamatan: primary.kecamatan,
+            alamat: primary.alamat,
+            dishub, rak50cm, rak65cm, rak75cm, rakDuaSisi, rakPack, rakCustome,
+            displayWowAll, biayaDisplayWow, displayWowHilo, biayaDisplayWowHilo,
+            namaMds: mdsMatch.namaMds,
+            pic: picRaw,
+            latitude: primary.latitude,
+            longitude: primary.longitude,
+            status: 'Active',
+            notes: String(r['Notes'] || ''),
+          });
+        });
+
+        if (validItems.length > 0) {
+          await bulkImportMappings(validItems);
+        }
+        setImportResult({ successCount: validItems.length, failed });
       } catch (err: any) {
-        alert('Gagal membaca file: ' + err.message);
+        setImportResult({ successCount: 0, failed: [{ row: 0, reason: 'Gagal membaca file: ' + err.message }] });
+      } finally {
+        setIsImporting(false);
       }
     };
     reader.readAsBinaryString(file);
@@ -721,28 +1017,69 @@ export const MappingManagement: React.FC = () => {
               <span>Export Excel</span>
             </button>
 
+            <button
+              onClick={handleDownloadTemplate}
+              className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition-colors flex items-center gap-1.5"
+            >
+              <FileDown className="w-3.5 h-3.5" />
+              <span>Download Template</span>
+            </button>
+
             <label className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer">
               <Upload className="w-3.5 h-3.5" />
-              <span>Bulk Import</span>
+              <span>{isImporting ? 'Memproses...' : 'Bulk Import'}</span>
               <input
                 type="file"
                 accept=".xlsx,.xls,.csv"
                 onChange={handleFileUpload}
+                disabled={isImporting}
                 className="hidden"
               />
             </label>
           </div>
         </div>
 
-        {importStatus && (
-          <div className="mt-3 p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-xl flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-            <span>{importStatus}</span>
+        {importResult && (
+          <div className="mt-3 space-y-2">
+            <div
+              className={`p-3 border text-xs rounded-xl flex items-center justify-between gap-2 ${
+                importResult.failed.length === 0
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                  : 'bg-amber-50 border-amber-200 text-amber-800'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span>
+                  {importResult.successCount} baris berhasil diimpor
+                  {importResult.failed.length > 0 && `, ${importResult.failed.length} baris gagal (lihat detail di bawah)`}.
+                </span>
+              </div>
+              <button
+                onClick={() => setImportResult(null)}
+                className="text-slate-400 hover:text-slate-700 shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {importResult.failed.length > 0 && (
+              <div className="max-h-48 overflow-y-auto border border-red-200 rounded-xl divide-y divide-red-100">
+                {importResult.failed.map((f, i) => (
+                  <div key={i} className="p-2.5 text-[11px] text-red-700 bg-red-50/60 flex gap-2">
+                    <span className="font-bold shrink-0">
+                      {f.row > 0 ? `Baris ${f.row}` : 'Error'}
+                    </span>
+                    <span>{f.reason}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
         {/* Filter Controls Row */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 pt-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3 pt-4">
           <div className="relative">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
             <input
@@ -764,6 +1101,36 @@ export const MappingManagement: React.FC = () => {
               {depoOptions.map((d) => (
                 <option key={d} value={d}>
                   {d}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <select
+              value={filterKabupaten}
+              onChange={(e) => setFilterKabupaten(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="ALL">Semua Kabupaten</option>
+              {kabupatenOptions.map((k) => (
+                <option key={k} value={k}>
+                  {k}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <select
+              value={filterKecamatan}
+              onChange={(e) => setFilterKecamatan(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="ALL">Semua Kecamatan</option>
+              {kecamatanOptions.map((k) => (
+                <option key={k} value={k}>
+                  {k}
                 </option>
               ))}
             </select>
@@ -822,29 +1189,64 @@ export const MappingManagement: React.FC = () => {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
+          <table className="w-full text-left text-xs border-collapse table-fixed">
+            <colgroup>
+              <col style={{ width: '7%' }} />
+              <col style={{ width: '16%' }} />
+              <col style={{ width: '10%' }} />
+              <col style={{ width: '15%' }} />
+              <col style={{ width: '15%' }} />
+              <col style={{ width: '12%' }} />
+              <col style={{ width: '12%' }} />
+              <col style={{ width: '8%' }} />
+              <col style={{ width: '5%' }} />
+            </colgroup>
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200 text-slate-700 font-semibold">
-                <th className="py-3 px-3">Kode SO Group Area</th>
-                <th className="py-3 px-3">Nama Group &amp; Wilayah</th>
-                <th className="py-3 px-3 text-center">Klasifikasi</th>
-                <th className="py-3 px-3">Kode BSP (1/2/3)</th>
-                <th className="py-3 px-3">Kode UDN (1/2/3)</th>
-                <th className="py-3 px-3 text-center">Sarana POSM</th>
-                <th className="py-3 px-3 text-center">Display Wow</th>
-                <th className="py-3 px-3 text-center">MDS &amp; PIC</th>
-                <th className="py-3 px-3 text-center">Aksi</th>
+                <th className="py-3 px-2 cursor-pointer select-none" onClick={() => handleMapSort('ring')}>
+                  <div className="flex items-center gap-1">
+                    Classification Outlet <SortIcon field="ring" />
+                  </div>
+                </th>
+                <th className="py-3 px-2 cursor-pointer select-none" onClick={() => handleMapSort('name')}>
+                  <div className="flex items-center gap-1">
+                    Customer SO Group Area &amp; Area <SortIcon field="name" />
+                  </div>
+                </th>
+                <th className="py-3 px-2 cursor-pointer select-none" onClick={() => handleMapSort('code')}>
+                  <div className="flex items-center gap-1">
+                    Customer SO Group Area Code <SortIcon field="code" />
+                  </div>
+                </th>
+                <th className="py-3 px-2 cursor-pointer select-none" onClick={() => handleMapSort('bsp')}>
+                  <div className="flex items-center gap-1">
+                    Kode BSP (1/2/3) <SortIcon field="bsp" />
+                  </div>
+                </th>
+                <th className="py-3 px-2 cursor-pointer select-none" onClick={() => handleMapSort('udn')}>
+                  <div className="flex items-center gap-1">
+                    Kode UDN (1/2/3) <SortIcon field="udn" />
+                  </div>
+                </th>
+                <th className="py-3 px-2 text-center">Sarana POSM</th>
+                <th className="py-3 px-2 text-center">Display Wow</th>
+                <th className="py-3 px-2 text-center cursor-pointer select-none" onClick={() => handleMapSort('mds')}>
+                  <div className="flex items-center justify-center gap-1">
+                    MDS &amp; PIC <SortIcon field="mds" />
+                  </div>
+                </th>
+                <th className="py-3 px-2 text-center">Aksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredMappings.length === 0 ? (
+              {sortedMappings.length === 0 ? (
                 <tr>
                   <td colSpan={9} className="text-center py-8 text-slate-400">
                     Belum ada data mapping yang sesuai. Klik "Tambah Mapping Baru" untuk membuat.
                   </td>
                 </tr>
               ) : (
-                filteredMappings.map((m) => {
+                sortedMappings.map((m) => {
                   const hasAnyRak =
                     m.rak50cm ||
                     m.rak65cm ||
@@ -855,16 +1257,7 @@ export const MappingManagement: React.FC = () => {
 
                   return (
                     <tr key={m.mappingId} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="py-3 px-3 font-mono font-bold text-slate-900 whitespace-nowrap">
-                        {m.customerSoGroupAreaCode}
-                      </td>
-                      <td className="py-3 px-3">
-                        <div className="font-bold text-slate-900">{m.customerSoGroupArea}</div>
-                        <div className="text-[11px] text-slate-400">
-                          {m.kecamatan}, {m.kabupaten}
-                        </div>
-                      </td>
-                      <td className="py-3 px-3 text-center">
+                      <td className="py-3 px-2">
                         <span
                           className={`inline-block text-[11px] font-bold px-2 py-0.5 rounded-md ${
                             m.klasifikasiOutlet === 'Ring 1'
@@ -877,11 +1270,20 @@ export const MappingManagement: React.FC = () => {
                           {m.klasifikasiOutlet}
                         </span>
                       </td>
-                      <td className="py-3 px-3">
+                      <td className="py-3 px-2 break-words">
+                        <div className="font-bold text-slate-900">{m.customerSoGroupArea}</div>
+                        <div className="text-[11px] text-slate-400">
+                          {m.kecamatan}, {m.kabupaten}
+                        </div>
+                      </td>
+                      <td className="py-3 px-2 font-mono font-bold text-slate-900 break-all text-[11px]">
+                        {m.customerSoGroupAreaCode}
+                      </td>
+                      <td className="py-3 px-2 break-words">
                         {m.bspCode1 ? (
                           <div>
                             <div className="font-semibold text-slate-800">{m.namaCustomerBsp}</div>
-                            <div className="text-[11px] font-mono text-slate-500">
+                            <div className="text-[11px] font-mono text-slate-500 break-all">
                               {m.bspCode1}
                               {m.bspCode2 ? `, ${m.bspCode2}` : ''}
                             </div>
@@ -890,11 +1292,11 @@ export const MappingManagement: React.FC = () => {
                           <span className="text-slate-400 italic">Tidak ada</span>
                         )}
                       </td>
-                      <td className="py-3 px-3">
+                      <td className="py-3 px-2 break-words">
                         {m.udnCode1 ? (
                           <div>
                             <div className="font-semibold text-slate-800">{m.namaCustomerUdn}</div>
-                            <div className="text-[11px] font-mono text-slate-500">
+                            <div className="text-[11px] font-mono text-slate-500 break-all">
                               {m.udnCode1}
                               {m.udnCode2 ? `, ${m.udnCode2}` : ''}
                             </div>
@@ -903,8 +1305,8 @@ export const MappingManagement: React.FC = () => {
                           <span className="text-slate-400 italic">Tidak ada</span>
                         )}
                       </td>
-                      <td className="py-3 px-3 text-center">
-                        <div className="flex flex-wrap gap-1 justify-center max-w-[140px] mx-auto">
+                      <td className="py-3 px-2 text-center">
+                        <div className="flex flex-wrap gap-1 justify-center">
                           {m.dishub && (
                             <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700">
                               Dishub
@@ -945,7 +1347,7 @@ export const MappingManagement: React.FC = () => {
                           )}
                         </div>
                       </td>
-                      <td className="py-3 px-3 text-center">
+                      <td className="py-3 px-2 text-center">
                         {m.displayWowAll || m.displayWowHilo ? (
                           <div className="text-[11px]">
                             {m.displayWowAll && (
@@ -963,11 +1365,11 @@ export const MappingManagement: React.FC = () => {
                           <span className="text-slate-400 text-[11px]">-</span>
                         )}
                       </td>
-                      <td className="py-3 px-3 text-center whitespace-nowrap">
+                      <td className="py-3 px-2 text-center break-words">
                         <div className="font-semibold text-slate-800">{m.namaMds || '-'}</div>
                         <div className="text-[10px] text-slate-400">PIC: {m.pic || '-'}</div>
                       </td>
-                      <td className="py-3 px-3 text-center whitespace-nowrap">
+                      <td className="py-3 px-2 text-center whitespace-nowrap">
                         <div className="flex items-center justify-center gap-1">
                           <button
                             onClick={() => handleOpenEdit(m)}

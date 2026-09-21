@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
-import { CallPlanItem, OutletPerformance } from '../types';
+import { CallPlanItem, OutletPerformance, OutletMapping } from '../types';
 import { Tooltip } from './Tooltip';
 import {
   Calendar,
@@ -21,6 +21,8 @@ import {
   Printer,
   ChevronRight,
   Clock,
+  CheckCircle2,
+  FileDown,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
@@ -29,6 +31,7 @@ export const CallPlanManagement: React.FC = () => {
     currentUser,
     callPlans,
     performance,
+    mappings,
     userMds,
     createCallPlan,
     updateCallPlan,
@@ -69,6 +72,11 @@ export const CallPlanManagement: React.FC = () => {
 
   // Bulk Assign Modal State
   const [isBulkAssignOpen, setIsBulkAssignOpen] = useState(false);
+  const [importResult, setImportResult] = useState<{
+    successCount: number;
+    failed: { row: number; reason: string }[];
+  } | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
   const [selectedOutletCodes, setSelectedOutletCodes] = useState<string[]>([]);
   const [bulkFilterDepo, setBulkFilterDepo] = useState('ALL');
   const [bulkFilterRing, setBulkFilterRing] = useState('ALL');
@@ -337,6 +345,164 @@ export const CallPlanManagement: React.FC = () => {
   };
 
   // Export Call Plan
+  // Download a blank Excel template for Call Plan bulk upload
+  const handleDownloadCallPlanTemplate = () => {
+    const sampleMapping = mappings.find((m) =>
+      isManager ? true : accessibleDepo.includes(m.depoBsp) || accessibleDepo.includes(m.subDistUdn)
+    );
+    const exampleRow = {
+      'Nama MDS': accessibleMds[0]?.namaMds || 'Nama MDS',
+      'Kode Outlet': sampleMapping?.customerSoGroupAreaCode || 'JWTM-R1-14-CONTOHTOKO',
+      'Hari Kunjungan': 'Senin',
+      'Minggu 1': 'Yes',
+      'Minggu 2': 'No',
+      'Minggu 3': 'Yes',
+      'Minggu 4': 'No',
+    };
+    const ws = XLSX.utils.json_to_sheet([exampleRow]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Template Call Plan');
+    XLSX.writeFile(wb, 'Template_Bulk_Upload_CallPlan.xlsx');
+  };
+
+  // Bulk Upload handler — looks up outlet details from Mapping by code,
+  // validates every row, and skips only the rows that fail (with a reason).
+  const VALID_VISIT_DAYS: CallPlanItem['visitDay'][] = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+  const parseYesNoCp = (v: any): boolean | null => {
+    const s = String(v ?? '').trim().toLowerCase();
+    if (s === 'yes') return true;
+    if (s === 'no' || s === '') return false;
+    return null;
+  };
+
+  const handleCallPlanFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportResult(null);
+    setIsImporting(true);
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const data = evt.target?.result;
+        const wb = XLSX.read(data, { type: 'binary' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const json: any[] = XLSX.utils.sheet_to_json(ws);
+
+        if (json.length === 0) {
+          setImportResult({ successCount: 0, failed: [{ row: 0, reason: 'File kosong.' }] });
+          setIsImporting(false);
+          return;
+        }
+
+        // Existing schedule keys (MDS + outlet code + visit day) — never duplicate
+        const existingKeys = new Set(
+          callPlans.map((c) => `${c.namaMds.toLowerCase()}|${c.customerSoGroupAreaCode}|${c.visitDay}`)
+        );
+        const keysClaimedInFile = new Set<string>();
+
+        const validItems: Array<Omit<CallPlanItem, 'callPlanId'>> = [];
+        const failed: { row: number; reason: string }[] = [];
+
+        json.forEach((r, idx) => {
+          const rowNum = idx + 2;
+
+          const namaMdsRaw = String(r['Nama MDS'] || '').trim();
+          if (!namaMdsRaw) {
+            failed.push({ row: rowNum, reason: 'Nama MDS wajib diisi.' });
+            return;
+          }
+          const mdsMatch = accessibleMds.find((m) => m.namaMds.toLowerCase() === namaMdsRaw.toLowerCase());
+          if (!mdsMatch) {
+            failed.push({ row: rowNum, reason: `MDS "${namaMdsRaw}" tidak ditemukan / bukan MDS Anda.` });
+            return;
+          }
+
+          const kodeOutletRaw = String(r['Kode Outlet'] || '').trim();
+          if (!kodeOutletRaw) {
+            failed.push({ row: rowNum, reason: 'Kode Outlet wajib diisi.' });
+            return;
+          }
+          const mappingMatch = mappings.find(
+            (m) => m.customerSoGroupAreaCode.toLowerCase() === kodeOutletRaw.toLowerCase() && m.status === 'Active'
+          );
+          if (!mappingMatch) {
+            failed.push({ row: rowNum, reason: `Kode Outlet "${kodeOutletRaw}" tidak ditemukan di data Mapping (atau tidak aktif).` });
+            return;
+          }
+
+          if (!isManager && accessibleDepo.length > 0) {
+            const depoOk =
+              accessibleDepo.includes(mappingMatch.depoBsp) || accessibleDepo.includes(mappingMatch.subDistUdn);
+            if (!depoOk) {
+              failed.push({ row: rowNum, reason: 'Outlet ini di luar akses Anda.' });
+              return;
+            }
+          }
+
+          const visitDayRaw = String(r['Hari Kunjungan'] || '').trim();
+          if (!VALID_VISIT_DAYS.includes(visitDayRaw as CallPlanItem['visitDay'])) {
+            failed.push({ row: rowNum, reason: `Hari Kunjungan "${visitDayRaw}" tidak valid — harus Senin–Sabtu.` });
+            return;
+          }
+          const visitDay = visitDayRaw as CallPlanItem['visitDay'];
+
+          const w1 = parseYesNoCp(r['Minggu 1']);
+          const w2 = parseYesNoCp(r['Minggu 2']);
+          const w3 = parseYesNoCp(r['Minggu 3']);
+          const w4 = parseYesNoCp(r['Minggu 4']);
+          if (w1 === null || w2 === null || w3 === null || w4 === null) {
+            failed.push({ row: rowNum, reason: 'Kolom Minggu 1–4 harus diisi Yes atau No.' });
+            return;
+          }
+          const frequency = [w1, w2, w3, w4].filter(Boolean).length;
+          if (frequency === 0) {
+            failed.push({ row: rowNum, reason: 'Minimal 1 minggu harus dicentang Yes.' });
+            return;
+          }
+
+          const key = `${namaMdsRaw.toLowerCase()}|${mappingMatch.customerSoGroupAreaCode}|${visitDay}`;
+          if (existingKeys.has(key) || keysClaimedInFile.has(key)) {
+            failed.push({
+              row: rowNum,
+              reason: `Jadwal MDS "${namaMdsRaw}" untuk outlet ini di hari ${visitDay} sudah ada / duplikat dalam file.`,
+            });
+            return;
+          }
+          keysClaimedInFile.add(key);
+
+          validItems.push({
+            namaPic: currentUser?.namaPic || '',
+            namaMds: mdsMatch.namaMds,
+            customerSoGroupAreaCode: mappingMatch.customerSoGroupAreaCode,
+            customerSoGroupArea: mappingMatch.customerSoGroupArea,
+            klasifikasiOutlet: mappingMatch.klasifikasiOutlet,
+            kabupaten: mappingMatch.kabupaten,
+            kecamatan: mappingMatch.kecamatan,
+            alamat: mappingMatch.alamat,
+            visitDay,
+            week1: w1,
+            week2: w2,
+            week3: w3,
+            week4: w4,
+            frequency,
+          });
+        });
+
+        if (validItems.length > 0) {
+          await bulkImportCallPlans(validItems);
+        }
+        setImportResult({ successCount: validItems.length, failed });
+      } catch (err: any) {
+        setImportResult({ successCount: 0, failed: [{ row: 0, reason: 'Gagal membaca file: ' + err.message }] });
+      } finally {
+        setIsImporting(false);
+      }
+    };
+    reader.readAsBinaryString(file);
+    e.target.value = '';
+  };
+
   const handleExport = () => {
     const rows = filteredCallPlans.map((c) => ({
       'Call Plan ID': c.callPlanId,
@@ -416,6 +582,26 @@ export const CallPlanManagement: React.FC = () => {
             </button>
 
             <button
+              onClick={handleDownloadCallPlanTemplate}
+              className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition-colors flex items-center gap-1.5"
+            >
+              <FileDown className="w-3.5 h-3.5" />
+              <span>Download Template</span>
+            </button>
+
+            <label className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer">
+              <Upload className="w-3.5 h-3.5" />
+              <span>{isImporting ? 'Memproses...' : 'Bulk Upload'}</span>
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                onChange={handleCallPlanFileUpload}
+                disabled={isImporting}
+                className="hidden"
+              />
+            </label>
+
+            <button
               onClick={handlePrint}
               className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition-colors flex items-center gap-1.5"
             >
@@ -424,6 +610,45 @@ export const CallPlanManagement: React.FC = () => {
             </button>
           </div>
         </div>
+
+        {importResult && (
+          <div className="mt-3 space-y-2">
+            <div
+              className={`p-3 border text-xs rounded-xl flex items-center justify-between gap-2 ${
+                importResult.failed.length === 0
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                  : 'bg-amber-50 border-amber-200 text-amber-800'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span>
+                  {importResult.successCount} jadwal berhasil diimpor
+                  {importResult.failed.length > 0 && `, ${importResult.failed.length} baris gagal (lihat detail di bawah)`}.
+                </span>
+              </div>
+              <button
+                onClick={() => setImportResult(null)}
+                className="text-slate-400 hover:text-slate-700 shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {importResult.failed.length > 0 && (
+              <div className="max-h-48 overflow-y-auto border border-red-200 rounded-xl divide-y divide-red-100">
+                {importResult.failed.map((f, i) => (
+                  <div key={i} className="p-2.5 text-[11px] text-red-700 bg-red-50/60 flex gap-2">
+                    <span className="font-bold shrink-0">
+                      {f.row > 0 ? `Baris ${f.row}` : 'Error'}
+                    </span>
+                    <span>{f.reason}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Filters Row */}
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3 pt-4">
