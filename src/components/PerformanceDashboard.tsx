@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { OutletPerformance } from '../types';
 import { Tooltip } from './Tooltip';
@@ -65,6 +65,15 @@ export const PerformanceDashboard: React.FC<Props> = ({
     'overview' | 'pareto' | 'gainers' | 'coverage' | 'watchlist' | 'mds_leaderboard'
   >('overview');
 
+  // Pagination for Tabel Detail Outlet
+  const PAGE_SIZE = 50;
+  const [currentPage, setCurrentPage] = useState<number>(1);
+
+  // Reset to page 1 whenever any filter/search/sort changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedYear, selectedDist, selectedDepo, selectedKabupaten, selectedRing, searchQuery, sortField, sortDirection]);
+
   // Filter raw data based on permissions & UI filters
   const filteredData = useMemo(() => {
     return performance.filter((item) => {
@@ -101,6 +110,14 @@ export const PerformanceDashboard: React.FC<Props> = ({
     selectedRing,
     searchQuery,
   ]);
+
+  // Slice of filteredData for the current page only — prevents rendering
+  // thousands of DOM rows at once in Tabel Detail Outlet
+  const totalPages = Math.max(1, Math.ceil(filteredData.length / PAGE_SIZE));
+  const paginatedData = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return filteredData.slice(start, start + PAGE_SIZE);
+  }, [filteredData, currentPage]);
 
   // Unique dropdown options
   const distOptions = useMemo(() => {
@@ -787,7 +804,7 @@ export const PerformanceDashboard: React.FC<Props> = ({
                     </td>
                   </tr>
                 ) : (
-                  filteredData.map((outlet) => {
+                  paginatedData.map((outlet) => {
                     const isR1 = outlet.calculatedRing === 'Ring 1';
                     const isR2 = outlet.calculatedRing === 'Ring 2';
                     const isR3 = outlet.calculatedRing === 'Ring 3';
@@ -888,6 +905,35 @@ export const PerformanceDashboard: React.FC<Props> = ({
               </tbody>
             </table>
           </div>
+
+          {filteredData.length > 0 && (
+            <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 text-xs text-slate-600">
+              <span>
+                Menampilkan {(currentPage - 1) * PAGE_SIZE + 1}
+                –{Math.min(currentPage * PAGE_SIZE, filteredData.length)} dari{' '}
+                {filteredData.length.toLocaleString('id-ID')} outlet
+              </span>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="px-2.5 py-1.5 rounded-lg border border-slate-200 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
+                >
+                  Sebelumnya
+                </button>
+                <span className="px-2 font-semibold text-slate-700">
+                  Halaman {currentPage} / {totalPages}
+                </span>
+                <button
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="px-2.5 py-1.5 rounded-lg border border-slate-200 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
+                >
+                  Berikutnya
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
