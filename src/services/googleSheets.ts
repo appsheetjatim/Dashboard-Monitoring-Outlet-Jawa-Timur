@@ -259,8 +259,8 @@ export async function fetchAllGoogleSheetsData(token: string) {
 function parsePerformanceRows(rows: any[][] | null): OutletPerformance[] {
   if (!rows || rows.length === 0) return [];
   return rows.map((r) => {
-    const lat = r[25] ? parseNum(r[25]) : undefined;
-    const lng = r[26] ? parseNum(r[26]) : undefined;
+    const lat = r[34] ? parseNum(r[34]) : undefined;
+    const lng = r[35] ? parseNum(r[35]) : undefined;
 
     return {
       dist: r[0] || '',
