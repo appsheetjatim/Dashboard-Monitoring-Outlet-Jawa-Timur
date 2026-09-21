@@ -37,6 +37,7 @@ export const CallPlanManagement: React.FC = () => {
     copyCallPlanFromPrevious,
     bulkImportCallPlans,
     accessibleMds,
+    accessibleDepo,
   } = useApp();
 
   const isManager = currentUser?.role === 'Manager';
@@ -81,15 +82,20 @@ export const CallPlanManagement: React.FC = () => {
   const [bulkFreq, setBulkFreq] = useState(4);
   const [bulkNotice, setBulkNotice] = useState<string | null>(null);
 
-  // Unscheduled Outlets (Ring 1 & 2 especially)
+  // Unscheduled Outlets (Ring 1 & 2 especially) — restricted to the logged-in
+  // PIC's accessible Depo, same as Dashboard Performance & Mapping.
   const unscheduledOutlets = useMemo(() => {
     const scheduledCodes = new Set(callPlans.map((c) => c.customerSoGroupAreaCode));
-    return performance.filter(
+    let pool = performance.filter(
       (p) =>
         !scheduledCodes.has(p.kodeCustNfiGroup) &&
         (p.calculatedRing === 'Ring 1' || p.calculatedRing === 'Ring 2')
     );
-  }, [performance, callPlans]);
+    if (!isManager && accessibleDepo.length > 0) {
+      pool = pool.filter((p) => accessibleDepo.includes(p.depo));
+    }
+    return pool;
+  }, [performance, callPlans, isManager, accessibleDepo]);
 
   // Filtered Call Plans
   const filteredCallPlans = useMemo(() => {
@@ -273,6 +279,39 @@ export const CallPlanManagement: React.FC = () => {
     }
   };
 
+  // Bulk Assign outlet pool: restricted to the logged-in PIC's accessible Depo,
+  // then narrowed by the (previously unused) bulkFilterDepo/bulkFilterRing/bulkSearch state
+  const BULK_MAX_RESULTS = 100;
+  const bulkOutletBasePool = useMemo(() => {
+    if (!isManager && accessibleDepo.length > 0) {
+      return performance.filter((p) => accessibleDepo.includes(p.depo));
+    }
+    return performance;
+  }, [performance, isManager, accessibleDepo]);
+
+  const bulkOutletDepoOptions = useMemo(
+    () => Array.from(new Set(bulkOutletBasePool.map((p) => p.depo).filter(Boolean))),
+    [bulkOutletBasePool]
+  );
+
+  const bulkOutletResults = useMemo(() => {
+    let pool = bulkOutletBasePool;
+    if (bulkFilterDepo !== 'ALL') pool = pool.filter((p) => p.depo === bulkFilterDepo);
+    if (bulkFilterRing !== 'ALL') pool = pool.filter((p) => p.calculatedRing === bulkFilterRing);
+    if (bulkSearch.trim()) {
+      const q = bulkSearch.trim().toLowerCase();
+      pool = pool.filter(
+        (p) => p.namaCustomerBaru.toLowerCase().includes(q) || p.kodeCustNfiGroup.toLowerCase().includes(q)
+      );
+    }
+    return pool;
+  }, [bulkOutletBasePool, bulkFilterDepo, bulkFilterRing, bulkSearch]);
+
+  const bulkOutletDisplayed = useMemo(
+    () => bulkOutletResults.slice(0, BULK_MAX_RESULTS),
+    [bulkOutletResults]
+  );
+
   const handleExecuteBulkAssign = async () => {
     if (!bulkTargetMds) {
       setBulkNotice('Pilih petugas MDS.');
@@ -405,8 +444,8 @@ export const CallPlanManagement: React.FC = () => {
               onChange={(e) => setSelectedMds(e.target.value)}
               className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
             >
-              <option value="ALL">Semua Petugas MDS ({userMds.length})</option>
-              {userMds.map((m) => (
+              <option value="ALL">Semua Petugas MDS ({accessibleMds.length})</option>
+              {accessibleMds.map((m) => (
                 <option key={m.namaMds} value={m.namaMds}>
                   {m.namaMds} ({m.area})
                 </option>
@@ -749,7 +788,7 @@ export const CallPlanManagement: React.FC = () => {
                   className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
                 >
                   <option value="">Pilih Petugas MDS...</option>
-                  {userMds.map((m) => (
+                  {accessibleMds.map((m) => (
                     <option key={m.namaMds} value={m.namaMds}>
                       {m.namaMds} ({m.area})
                     </option>
@@ -924,7 +963,7 @@ export const CallPlanManagement: React.FC = () => {
                     className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-semibold text-slate-900"
                   >
                     <option value="">Pilih Petugas MDS...</option>
-                    {userMds.map((m) => (
+                    {accessibleMds.map((m) => (
                       <option key={m.namaMds} value={m.namaMds}>
                         {m.namaMds} ({m.area})
                       </option>
@@ -988,49 +1027,100 @@ export const CallPlanManagement: React.FC = () => {
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <label className="text-xs font-bold text-slate-800">
-                    Pilih Outlet ({selectedOutletCodes.length} dipilih):
+                    Pilih Outlet ({selectedOutletCodes.length} dipilih dari {bulkOutletResults.length.toLocaleString('id-ID')} hasil):
                   </label>
                   <button
                     type="button"
-                    onClick={() => handleSelectAllBulk(performance)}
+                    onClick={() => handleSelectAllBulk(bulkOutletDisplayed)}
                     className="text-xs text-indigo-600 hover:underline font-semibold"
                   >
-                    {selectedOutletCodes.length === performance.length ? 'Batalkan Semua' : 'Pilih Semua'}
+                    {selectedOutletCodes.length === bulkOutletDisplayed.length ? 'Batalkan Semua' : 'Pilih Semua (halaman ini)'}
                   </button>
                 </div>
 
-                <div className="max-h-60 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-2xl">
-                  {performance.map((out) => {
-                    const isSelected = selectedOutletCodes.includes(out.kodeCustNfiGroup);
-                    return (
-                      <div
-                        key={out.kodeCustNfiGroup}
-                        onClick={() => handleSelectBulkOutlet(out.kodeCustNfiGroup)}
-                        className={`p-3 cursor-pointer flex items-center justify-between transition-colors ${
-                          isSelected ? 'bg-indigo-50/70 font-semibold' : 'hover:bg-slate-50'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2.5">
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => {}} // handled by parent onClick
-                            className="rounded text-indigo-600"
-                          />
-                          <div>
-                            <p className="text-xs text-slate-900">{out.namaCustomerBaru}</p>
-                            <p className="text-[11px] text-slate-400">
-                              {out.kodeCustNfiGroup} • {out.depo} • {out.kabupaten}
-                            </p>
-                          </div>
-                        </div>
-                        <span className="text-[11px] px-2 py-0.5 rounded bg-slate-100 text-slate-700">
-                          {out.calculatedRing}
-                        </span>
-                      </div>
-                    );
-                  })}
+                {!isManager && (
+                  <p className="text-[11px] text-indigo-600 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-1.5 mb-2">
+                    Daftar otomatis dibatasi ke Depo yang menjadi tanggung jawab Anda.
+                  </p>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-2">
+                  <div className="relative sm:col-span-1">
+                    <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      value={bulkSearch}
+                      onChange={(e) => setBulkSearch(e.target.value)}
+                      placeholder="Cari nama/kode outlet..."
+                      className="w-full pl-8 pr-3 py-2 text-xs rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    />
+                  </div>
+                  <select
+                    value={bulkFilterDepo}
+                    onChange={(e) => setBulkFilterDepo(e.target.value)}
+                    className="text-[11px] px-2.5 py-2 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                  >
+                    <option value="ALL">Semua Depo</option>
+                    {bulkOutletDepoOptions.map((v) => (
+                      <option key={v} value={v}>{v}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={bulkFilterRing}
+                    onChange={(e) => setBulkFilterRing(e.target.value)}
+                    className="text-[11px] px-2.5 py-2 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                  >
+                    <option value="ALL">Semua Ring</option>
+                    <option value="Ring 1">Ring 1</option>
+                    <option value="Ring 2">Ring 2</option>
+                    <option value="Ring 3">Ring 3</option>
+                    <option value="Ring 4">Ring 4</option>
+                  </select>
                 </div>
+
+                <div className="max-h-60 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-2xl">
+                  {bulkOutletDisplayed.length === 0 ? (
+                    <div className="p-4 text-center text-xs text-slate-400">
+                      Tidak ada outlet yang sesuai filter/pencarian.
+                    </div>
+                  ) : (
+                    bulkOutletDisplayed.map((out) => {
+                      const isSelected = selectedOutletCodes.includes(out.kodeCustNfiGroup);
+                      return (
+                        <div
+                          key={out.kodeCustNfiGroup}
+                          onClick={() => handleSelectBulkOutlet(out.kodeCustNfiGroup)}
+                          className={`p-3 cursor-pointer flex items-center justify-between transition-colors ${
+                            isSelected ? 'bg-indigo-50/70 font-semibold' : 'hover:bg-slate-50'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => {}} // handled by parent onClick
+                              className="rounded text-indigo-600"
+                            />
+                            <div>
+                              <p className="text-xs text-slate-900">{out.namaCustomerBaru}</p>
+                              <p className="text-[11px] text-slate-400">
+                                {out.kodeCustNfiGroup} • {out.depo} • {out.kabupaten}
+                              </p>
+                            </div>
+                          </div>
+                          <span className="text-[11px] px-2 py-0.5 rounded bg-slate-100 text-slate-700">
+                            {out.calculatedRing}
+                          </span>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+                {bulkOutletResults.length > BULK_MAX_RESULTS && (
+                  <p className="text-[11px] text-amber-600 mt-1.5">
+                    Menampilkan {BULK_MAX_RESULTS} dari {bulkOutletResults.length.toLocaleString('id-ID')} hasil — persempit dengan pencarian atau filter Depo/Ring untuk melihat outlet lainnya.
+                  </p>
+                )}
               </div>
 
               <div className="pt-3 flex justify-end gap-2 border-t border-slate-100">

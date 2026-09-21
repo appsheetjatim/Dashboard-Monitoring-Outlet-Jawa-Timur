@@ -32,6 +32,7 @@ export const MappingManagement: React.FC = () => {
     mappings,
     performance,
     userMds,
+    accessibleMds,
     createMapping,
     updateMapping,
     deleteMapping,
@@ -57,6 +58,11 @@ export const MappingManagement: React.FC = () => {
   // Form Fields
   const [primaryDist, setPrimaryDist] = useState<'BSP' | 'UDN'>('BSP');
   const [selectedPrimaryOutlet, setSelectedPrimaryOutlet] = useState<OutletPerformance | null>(null);
+  const [wizardSearch, setWizardSearch] = useState('');
+  const [wizardSubDist, setWizardSubDist] = useState('ALL');
+  const [wizardDepo, setWizardDepo] = useState('ALL');
+  const [wizardKabupaten, setWizardKabupaten] = useState('ALL');
+  const [wizardKecamatan, setWizardKecamatan] = useState('ALL');
   const [selectedCandidate, setSelectedCandidate] = useState<CandidateMatch | null>(null);
   const [isOneSided, setIsOneSided] = useState(false);
 
@@ -144,8 +150,86 @@ export const MappingManagement: React.FC = () => {
   }, [mappings]);
 
   const mdsOptions = useMemo(() => {
+    if (!isManager) return Array.from(new Set(accessibleMds.map((m) => m.namaMds).filter(Boolean)));
     return Array.from(new Set(mappings.map((m) => m.namaMds).filter(Boolean)));
-  }, [mappings]);
+  }, [mappings, isManager, accessibleMds]);
+
+  // Wizard Step 1: base pool already restricted to the logged-in PIC's Depo access
+  const wizardBasePool = useMemo(() => {
+    let pool = performance.filter((p) => p.dist === primaryDist);
+    if (!isManager && accessibleDepo.length > 0) {
+      pool = pool.filter((p) => accessibleDepo.includes(p.depo));
+    }
+    return pool;
+  }, [performance, primaryDist, isManager, accessibleDepo]);
+
+  // Cascading filter dropdown options (Sub Dist -> Depo -> Kabupaten -> Kecamatan)
+  const wizardSubDistOptions = useMemo(
+    () => Array.from(new Set(wizardBasePool.map((p) => p.subDist).filter(Boolean))),
+    [wizardBasePool]
+  );
+  const wizardDepoOptions = useMemo(() => {
+    const pool = wizardSubDist === 'ALL' ? wizardBasePool : wizardBasePool.filter((p) => p.subDist === wizardSubDist);
+    return Array.from(new Set(pool.map((p) => p.depo).filter(Boolean)));
+  }, [wizardBasePool, wizardSubDist]);
+  const wizardKabupatenOptions = useMemo(() => {
+    let pool = wizardSubDist === 'ALL' ? wizardBasePool : wizardBasePool.filter((p) => p.subDist === wizardSubDist);
+    pool = wizardDepo === 'ALL' ? pool : pool.filter((p) => p.depo === wizardDepo);
+    return Array.from(new Set(pool.map((p) => p.kabupaten).filter(Boolean)));
+  }, [wizardBasePool, wizardSubDist, wizardDepo]);
+  const wizardKecamatanOptions = useMemo(() => {
+    let pool = wizardSubDist === 'ALL' ? wizardBasePool : wizardBasePool.filter((p) => p.subDist === wizardSubDist);
+    pool = wizardDepo === 'ALL' ? pool : pool.filter((p) => p.depo === wizardDepo);
+    pool = wizardKabupaten === 'ALL' ? pool : pool.filter((p) => p.kabupaten === wizardKabupaten);
+    return Array.from(new Set(pool.map((p) => p.kecamatan).filter(Boolean)));
+  }, [wizardBasePool, wizardSubDist, wizardDepo, wizardKabupaten]);
+
+  // Final Wizard Step 1 results: access + filters + search, capped for render performance
+  const WIZARD_MAX_RESULTS = 100;
+  const primaryOutletResults = useMemo(() => {
+    let pool = wizardBasePool;
+    if (wizardSubDist !== 'ALL') pool = pool.filter((p) => p.subDist === wizardSubDist);
+    if (wizardDepo !== 'ALL') pool = pool.filter((p) => p.depo === wizardDepo);
+    if (wizardKabupaten !== 'ALL') pool = pool.filter((p) => p.kabupaten === wizardKabupaten);
+    if (wizardKecamatan !== 'ALL') pool = pool.filter((p) => p.kecamatan === wizardKecamatan);
+    if (wizardSearch.trim()) {
+      const q = wizardSearch.trim().toLowerCase();
+      pool = pool.filter(
+        (p) => p.namaCustomerBaru.toLowerCase().includes(q) || p.kodeCustNfiGroup.toLowerCase().includes(q)
+      );
+    }
+    return pool;
+  }, [wizardBasePool, wizardSubDist, wizardDepo, wizardKabupaten, wizardKecamatan, wizardSearch]);
+
+  const primaryOutletDisplayed = useMemo(
+    () => primaryOutletResults.slice(0, WIZARD_MAX_RESULTS),
+    [primaryOutletResults]
+  );
+
+  // Reset dependent filters whenever a parent filter changes (Dist -> Sub Dist -> Depo -> Kabupaten -> Kecamatan)
+  const handleWizardDistChange = (dist: 'BSP' | 'UDN') => {
+    setPrimaryDist(dist);
+    setWizardSubDist('ALL');
+    setWizardDepo('ALL');
+    setWizardKabupaten('ALL');
+    setWizardKecamatan('ALL');
+    setWizardSearch('');
+  };
+  const handleWizardSubDistChange = (value: string) => {
+    setWizardSubDist(value);
+    setWizardDepo('ALL');
+    setWizardKabupaten('ALL');
+    setWizardKecamatan('ALL');
+  };
+  const handleWizardDepoChange = (value: string) => {
+    setWizardDepo(value);
+    setWizardKabupaten('ALL');
+    setWizardKecamatan('ALL');
+  };
+  const handleWizardKabupatenChange = (value: string) => {
+    setWizardKabupaten(value);
+    setWizardKecamatan('ALL');
+  };
 
   // Candidates for fuzzy cross-distributor matching
   const matchingCandidates = useMemo(() => {
@@ -881,7 +965,7 @@ export const MappingManagement: React.FC = () => {
                         <button
                           key={dist}
                           type="button"
-                          onClick={() => setPrimaryDist(dist)}
+                          onClick={() => handleWizardDistChange(dist)}
                           className={`px-4 py-1.5 rounded-lg transition-all ${
                             primaryDist === dist
                               ? 'bg-indigo-600 text-white shadow-xs'
@@ -894,14 +978,78 @@ export const MappingManagement: React.FC = () => {
                     </div>
                   </div>
 
+                  {!isManager && (
+                    <p className="text-[11px] text-indigo-600 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-1.5">
+                      Daftar di bawah otomatis dibatasi ke Depo yang menjadi tanggung jawab Anda.
+                    </p>
+                  )}
+
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      value={wizardSearch}
+                      onChange={(e) => setWizardSearch(e.target.value)}
+                      placeholder="Cari nama atau kode outlet..."
+                      className="w-full pl-8 pr-3 py-2 text-xs rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <select
+                      value={wizardSubDist}
+                      onChange={(e) => handleWizardSubDistChange(e.target.value)}
+                      className="text-[11px] px-2.5 py-2 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    >
+                      <option value="ALL">Semua Sub Dist</option>
+                      {wizardSubDistOptions.map((v) => (
+                        <option key={v} value={v}>{v}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={wizardDepo}
+                      onChange={(e) => handleWizardDepoChange(e.target.value)}
+                      className="text-[11px] px-2.5 py-2 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    >
+                      <option value="ALL">Semua Depo</option>
+                      {wizardDepoOptions.map((v) => (
+                        <option key={v} value={v}>{v}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={wizardKabupaten}
+                      onChange={(e) => handleWizardKabupatenChange(e.target.value)}
+                      className="text-[11px] px-2.5 py-2 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    >
+                      <option value="ALL">Semua Kabupaten</option>
+                      {wizardKabupatenOptions.map((v) => (
+                        <option key={v} value={v}>{v}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={wizardKecamatan}
+                      onChange={(e) => setWizardKecamatan(e.target.value)}
+                      className="text-[11px] px-2.5 py-2 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    >
+                      <option value="ALL">Semua Kecamatan</option>
+                      {wizardKecamatanOptions.map((v) => (
+                        <option key={v} value={v}>{v}</option>
+                      ))}
+                    </select>
+                  </div>
+
                   <p className="text-xs text-slate-500">
-                    Pilih toko dari data Performance distributor <strong>{primaryDist}</strong> yang ingin dipetakan:
+                    Pilih toko dari data Performance distributor <strong>{primaryDist}</strong> yang ingin dipetakan
+                    {' '}({primaryOutletResults.length.toLocaleString('id-ID')} hasil):
                   </p>
 
                   <div className="max-h-64 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-2xl">
-                    {performance
-                      .filter((p) => p.dist === primaryDist)
-                      .map((p) => (
+                    {primaryOutletDisplayed.length === 0 ? (
+                      <div className="p-4 text-center text-xs text-slate-400">
+                        Tidak ada outlet yang sesuai filter/pencarian.
+                      </div>
+                    ) : (
+                      primaryOutletDisplayed.map((p) => (
                         <div
                           key={p.kodeCustNfiGroup}
                           onClick={() => handleSelectPrimaryOutlet(p)}
@@ -924,8 +1072,14 @@ export const MappingManagement: React.FC = () => {
                             </div>
                           </div>
                         </div>
-                      ))}
+                      ))
+                    )}
                   </div>
+                  {primaryOutletResults.length > WIZARD_MAX_RESULTS && (
+                    <p className="text-[11px] text-amber-600">
+                      Menampilkan {WIZARD_MAX_RESULTS} dari {primaryOutletResults.length.toLocaleString('id-ID')} hasil — persempit dengan pencarian atau filter Depo/Kabupaten/Kecamatan untuk melihat outlet lainnya.
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -1334,7 +1488,7 @@ export const MappingManagement: React.FC = () => {
                         className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
                       >
                         <option value="">Pilih Petugas MDS...</option>
-                        {userMds.map((m) => (
+                        {accessibleMds.map((m) => (
                           <option key={m.namaMds} value={m.namaMds}>
                             {m.namaMds} ({m.area})
                           </option>
