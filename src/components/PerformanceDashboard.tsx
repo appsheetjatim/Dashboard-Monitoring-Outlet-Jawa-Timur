@@ -77,11 +77,12 @@ export const PerformanceDashboard: React.FC<Props> = ({
   // Filter raw data based on permissions & UI filters
   const filteredData = useMemo(() => {
     return performance.filter((item) => {
-      // Role Supervisor: restrict to their own covered distributors & depo
-      if (!isManager) {
-        const matchesDist = accessibleDistributors.length === 0 || accessibleDistributors.includes(item.dist);
-        const matchesDepo = accessibleDepo.length === 0 || accessibleDepo.includes(item.depo);
-        if (!matchesDist && !matchesDepo) return false;
+      // Role Supervisor: restrict to outlets whose Depo is in the PIC's assignment
+      // (Dist alone is NOT a valid discriminator — dataset only has 2 Dist values
+      // (BSP/UDN) and most Supervisors cover both, which previously made the
+      // Dist check always true and let Supervisors see all of Jawa Timur)
+      if (!isManager && accessibleDepo.length > 0) {
+        if (!accessibleDepo.includes(item.depo)) return false;
       }
 
       if (selectedDist !== 'ALL' && item.dist !== selectedDist) return false;

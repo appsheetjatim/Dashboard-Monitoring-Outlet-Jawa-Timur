@@ -9,7 +9,8 @@ interface Props {
 }
 
 export const OutletMap: React.FC<Props> = ({ onSelectOutletForCallPlan }) => {
-  const { performance, mappings, callPlans } = useApp();
+  const { performance, mappings, callPlans, currentUser, accessibleDepo } = useApp();
+  const isManager = currentUser?.role === 'Manager';
 
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -25,6 +26,10 @@ export const OutletMap: React.FC<Props> = ({ onSelectOutletForCallPlan }) => {
   const mappedOutlets = useMemo(() => {
     return performance.filter((item) => {
       if (!item.latitude || !item.longitude) return false;
+      // Peta Sebaran sebelumnya tidak membatasi akses sama sekali — Supervisor
+      // bisa melihat seluruh outlet se-Jawa Timur di peta. Terapkan pembatasan
+      // Depo yang sama seperti Dashboard Performance & Mapping.
+      if (!isManager && accessibleDepo.length > 0 && !accessibleDepo.includes(item.depo)) return false;
       if (selectedRing !== 'ALL' && item.calculatedRing !== selectedRing) return false;
       if (selectedDepo !== 'ALL' && item.depo !== selectedDepo) return false;
       if (searchQuery.trim()) {
@@ -41,8 +46,9 @@ export const OutletMap: React.FC<Props> = ({ onSelectOutletForCallPlan }) => {
   }, [performance, selectedRing, selectedDepo, searchQuery]);
 
   const depoOptions = useMemo(() => {
+    if (!isManager) return accessibleDepo;
     return Array.from(new Set(performance.map((p) => p.depo).filter(Boolean)));
-  }, [performance]);
+  }, [performance, isManager, accessibleDepo]);
 
   // Initialize Map
   useEffect(() => {

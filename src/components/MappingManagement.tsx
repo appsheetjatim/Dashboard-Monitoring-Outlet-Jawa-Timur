@@ -37,6 +37,7 @@ export const MappingManagement: React.FC = () => {
     deleteMapping,
     bulkImportMappings,
     accessibleDistributors,
+    accessibleDepo,
   } = useApp();
 
   const isManager = currentUser?.role === 'Manager';
@@ -106,9 +107,13 @@ export const MappingManagement: React.FC = () => {
   // Filtered Mappings list
   const filteredMappings = useMemo(() => {
     return mappings.filter((m) => {
-      if (!isManager && accessibleDistributors.length > 0) {
-        const matchesBsp = accessibleDistributors.includes('BSP') && !!m.subDistBsp;
-        const matchesUdn = accessibleDistributors.includes('UDN') && !!m.subDistUdn;
+      // Restrict to mappings whose BSP Depo or UDN Sub Dist falls within the
+      // PIC's assigned Depo list — checking only Dist (BSP/UDN presence) was
+      // wrong because most mappings have both BSP and UDN sides filled, which
+      // made this check always pass and exposed all mappings to every Supervisor.
+      if (!isManager && accessibleDepo.length > 0) {
+        const matchesBsp = !!m.depoBsp && accessibleDepo.includes(m.depoBsp);
+        const matchesUdn = !!m.subDistUdn && accessibleDepo.includes(m.subDistUdn);
         if (!matchesBsp && !matchesUdn) return false;
       }
 
