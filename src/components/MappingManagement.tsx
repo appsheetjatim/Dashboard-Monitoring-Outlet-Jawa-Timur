@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { OutletMapping, OutletPerformance } from '../types';
 import { generateCustomerSoGroupAreaCode } from '../services/outletClassification';
-import { findCandidateMatches, CandidateMatch } from '../services/fuzzyMatch';
+import { findCandidateMatches, CandidateMatch, calculateNameSimilarity } from '../services/fuzzyMatch';
 import { Tooltip } from './Tooltip';
 import {
   Plus,
@@ -63,6 +63,8 @@ export const MappingManagement: React.FC = () => {
   const [wizardDepo, setWizardDepo] = useState('ALL');
   const [wizardKabupaten, setWizardKabupaten] = useState('ALL');
   const [wizardKecamatan, setWizardKecamatan] = useState('ALL');
+  const [showManualPairSearch, setShowManualPairSearch] = useState(false);
+  const [manualPairSearch, setManualPairSearch] = useState('');
   const [selectedCandidate, setSelectedCandidate] = useState<CandidateMatch | null>(null);
   const [isOneSided, setIsOneSided] = useState(false);
 
@@ -235,9 +237,108 @@ export const MappingManagement: React.FC = () => {
   const matchingCandidates = useMemo(() => {
     if (!selectedPrimaryOutlet) return [];
     const targetDist = primaryDist === 'BSP' ? 'UDN' : 'BSP';
-    const targetOutlets = performance.filter((p) => p.dist === targetDist);
+    let targetOutlets = performance.filter((p) => p.dist === targetDist);
+    // Restrict candidate pool to the logged-in PIC's accessible Depo — otherwise
+    // a Supervisor gets pairing suggestions from anywhere in Jawa Timur, which
+    // also produces geographically nonsensical matches (different cities).
+    if (!isManager && accessibleDepo.length > 0) {
+      targetOutlets = targetOutlets.filter((p) => accessibleDepo.includes(p.depo));
+    }
     return findCandidateMatches(selectedPrimaryOutlet, targetOutlets);
-  }, [selectedPrimaryOutlet, primaryDist, performance]);
+  }, [selectedPrimaryOutlet, primaryDist, performance, isManager, accessibleDepo]);
+
+  // Manual pairing search: same access-restricted pool as the recommendation
+  // engine, but user-driven by free text — for cases where the top-5 auto
+  // recommendation doesn't contain the correct match.
+  const MANUAL_PAIR_MAX_RESULTS = 20;
+  const manualPairResults = useMemo(() => {
+    if (!selectedPrimaryOutlet || !manualPairSearch.trim()) return [];
+    const targetDist = primaryDist === 'BSP' ? 'UDN' : 'BSP';
+    let pool = performance.filter((p) => p.dist === targetDist);
+    if (!isManager && accessibleDepo.length > 0) {
+      pool = pool.filter((p) => accessibleDepo.includes(p.depo));
+    }
+    const q = manualPairSearch.trim().toLowerCase();
+    pool = pool.filter(
+      (p) => p.namaCustomerBaru.toLowerCase().includes(q) || p.kodeCustNfiGroup.toLowerCase().includes(q)
+    );
+    return pool.slice(0, MANUAL_PAIR_MAX_RESULTS);
+  }, [selectedPrimaryOutlet, primaryDist, performance, isManager, accessibleDepo, manualPairSearch]);
+
+  // Handle picking a pairing manually (bypassing the top-5 algorithm)
+  const handleSelectManualPair = (outlet: OutletPerformance) => {
+    setSelectedCandidate(null);
+    setIsOneSided(false);
+    if (primaryDist === 'BSP') {
+      setUdnCode1(outlet.kodeCustNfiGroup);
+      setNamaCustomerUdn(outlet.namaCustomerBaru);
+      setSubDistUdn(outlet.subDist);
+    } else {
+      setBspCode1(outlet.kodeCustNfiGroup);
+      setNamaCustomerBsp(outlet.namaCustomerBaru);
+      setDepoBsp(outlet.depo);
+      setSubDistBsp(outlet.subDist);
+    }
+    setWizardStep(3);
+  };
+
+  // Detect possible duplicate codes within the SAME distributor + depo/subdist
+  // (same physical store registered under a different code, e.g. after a tax
+  // ID change) — suggested only, never auto-filled, and excludes codes already
+  // used in this form or in any other active mapping.
+  const codesUsedElsewhere = useMemo(() => {
+    const set = new Set<string>();
+    mappings.forEach((m) => {
+      if (m.mappingId === editingMappingId) return;
+      [m.bspCode1, m.bspCode2, m.bspCode3, m.udnCode1, m.udnCode2, m.udnCode3].forEach(
+        (c) => c && set.add(c)
+      );
+    });
+    return set;
+  }, [mappings, editingMappingId]);
+
+  const bspDuplicateSuggestions = useMemo(() => {
+    if (!namaCustomerBsp.trim() || !depoBsp) return [];
+    const usedHere = new Set([bspCode1, bspCode2, bspCode3].filter(Boolean));
+    return performance
+      .filter(
+        (p) =>
+          p.dist === 'BSP' &&
+          p.depo === depoBsp &&
+          !usedHere.has(p.kodeCustNfiGroup) &&
+          !codesUsedElsewhere.has(p.kodeCustNfiGroup)
+      )
+      .map((p) => ({ outlet: p, score: calculateNameSimilarity(namaCustomerBsp, p.namaCustomerBaru).score }))
+      .filter((x) => x.score >= 60)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3);
+  }, [namaCustomerBsp, depoBsp, bspCode1, bspCode2, bspCode3, performance, codesUsedElsewhere]);
+
+  const udnDuplicateSuggestions = useMemo(() => {
+    if (!namaCustomerUdn.trim() || !subDistUdn) return [];
+    const usedHere = new Set([udnCode1, udnCode2, udnCode3].filter(Boolean));
+    return performance
+      .filter(
+        (p) =>
+          p.dist === 'UDN' &&
+          p.subDist === subDistUdn &&
+          !usedHere.has(p.kodeCustNfiGroup) &&
+          !codesUsedElsewhere.has(p.kodeCustNfiGroup)
+      )
+      .map((p) => ({ outlet: p, score: calculateNameSimilarity(namaCustomerUdn, p.namaCustomerBaru).score }))
+      .filter((x) => x.score >= 60)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3);
+  }, [namaCustomerUdn, subDistUdn, udnCode1, udnCode2, udnCode3, performance, codesUsedElsewhere]);
+
+  const handleAddBspCode = (code: string) => {
+    if (!bspCode2) setBspCode2(code);
+    else if (!bspCode3) setBspCode3(code);
+  };
+  const handleAddUdnCode = (code: string) => {
+    if (!udnCode2) setUdnCode2(code);
+    else if (!udnCode3) setUdnCode3(code);
+  };
 
   // Generated Real-time Customer SO Group Area Code
   const generatedCode = useMemo(() => {
@@ -332,6 +433,8 @@ export const MappingManagement: React.FC = () => {
     setSelectedPrimaryOutlet(outlet);
     setSelectedCandidate(null);
     setIsOneSided(false);
+    setShowManualPairSearch(false);
+    setManualPairSearch('');
     setSoGroupAreaName(outlet.namaCustomerBaru);
     setKlasifikasi(outlet.calculatedRing);
     setKabupaten(outlet.kabupaten);
@@ -450,9 +553,9 @@ export const MappingManagement: React.FC = () => {
       rakPack: isRing1Submit ? rakPack : false,
       rakCustome: isRing1Submit ? rakCustome : false,
       displayWowAll: isRing1Submit ? displayWowAll : false,
-      biayaDisplayWow: isRing1Submit ? biayaDisplayWow : 0,
+      biayaDisplayWow: isRing1Submit && displayWowAll ? biayaDisplayWow : 0,
       displayWowHilo: isRing1Submit ? displayWowHilo : false,
-      biayaDisplayWowHilo: isRing1Submit ? biayaDisplayWowHilo : 0,
+      biayaDisplayWowHilo: isRing1Submit && displayWowHilo ? biayaDisplayWowHilo : 0,
       namaMds,
       pic: picName,
       latitude,
@@ -1187,6 +1290,55 @@ export const MappingManagement: React.FC = () => {
                     ))}
                   </div>
 
+                  <div className="pt-2 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => setShowManualPairSearch((v) => !v)}
+                      className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1"
+                    >
+                      <Search className="w-3.5 h-3.5" />
+                      {showManualPairSearch ? 'Sembunyikan pencarian manual' : 'Rekomendasi tidak cocok? Cari & pilih manual'}
+                    </button>
+
+                    {showManualPairSearch && (
+                      <div className="mt-2.5 space-y-2">
+                        <input
+                          type="text"
+                          value={manualPairSearch}
+                          onChange={(e) => setManualPairSearch(e.target.value)}
+                          placeholder={`Cari nama/kode outlet ${primaryDist === 'BSP' ? 'UDN' : 'BSP'} secara manual...`}
+                          className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                        />
+                        {manualPairSearch.trim() && (
+                          <div className="max-h-48 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-2xl">
+                            {manualPairResults.length === 0 ? (
+                              <div className="p-3 text-center text-xs text-slate-400">
+                                Tidak ada outlet yang cocok dengan pencarian.
+                              </div>
+                            ) : (
+                              manualPairResults.map((out) => (
+                                <div
+                                  key={out.kodeCustNfiGroup}
+                                  onClick={() => handleSelectManualPair(out)}
+                                  className="p-2.5 hover:bg-indigo-50/50 cursor-pointer flex items-center justify-between transition-colors group"
+                                >
+                                  <div>
+                                    <div className="font-bold text-xs text-slate-900 group-hover:text-indigo-600">
+                                      {out.namaCustomerBaru}
+                                    </div>
+                                    <div className="text-[11px] text-slate-400">
+                                      {out.kodeCustNfiGroup} • {out.kecamatan}, {out.kabupaten} ({out.depo})
+                                    </div>
+                                  </div>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
                   <div className="pt-2 flex justify-between">
                     <button
                       type="button"
@@ -1291,7 +1443,70 @@ export const MappingManagement: React.FC = () => {
                           className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono"
                         />
                       </div>
+                      <div>
+                        <label className="block text-[11px] text-slate-600 mb-0.5">
+                          BSP Code 2 <span className="text-slate-400">(opsional)</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={bspCode2}
+                          onChange={(e) => setBspCode2(e.target.value)}
+                          placeholder="Kode ganti pajak/NPWP, dll"
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-slate-600 mb-0.5">
+                          BSP Code 3 <span className="text-slate-400">(opsional)</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={bspCode3}
+                          onChange={(e) => setBspCode3(e.target.value)}
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono"
+                        />
+                      </div>
                     </div>
+
+                    {bspDuplicateSuggestions.length > 0 && (bspCode2 === '' || bspCode3 === '') && (
+                      <div className="pt-1">
+                        <p className="text-[11px] text-amber-700 mb-1.5 flex items-center gap-1">
+                          <Sparkles className="w-3 h-3" />
+                          Kemungkinan kode lain untuk toko yang sama (nama &amp; depo mirip) — cek alamat sebelum menambahkan:
+                        </p>
+                        <div className="space-y-1.5">
+                          {bspDuplicateSuggestions.map((s) => (
+                            <div
+                              key={s.outlet.kodeCustNfiGroup}
+                              onClick={() => handleAddBspCode(s.outlet.kodeCustNfiGroup)}
+                              className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl cursor-pointer hover:bg-amber-100 hover:border-amber-300 transition-colors flex items-center justify-between gap-2 group"
+                            >
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-bold text-xs text-slate-900 truncate">
+                                    {s.outlet.namaCustomerBaru}
+                                  </span>
+                                  <span className="text-[11px] font-mono text-slate-500 shrink-0">
+                                    ({s.outlet.kodeCustNfiGroup})
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-slate-500 truncate">
+                                  {s.outlet.alamat} • {s.outlet.kecamatan}, {s.outlet.kabupaten}
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <span className="text-[11px] font-bold px-2 py-0.5 rounded-lg bg-amber-200 text-amber-900">
+                                  {s.score}%
+                                </span>
+                                <span className="text-[11px] font-semibold text-amber-700 group-hover:text-amber-900 flex items-center gap-0.5">
+                                  <Plus className="w-3 h-3" /> Tambah
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Distributor UDN Fields */}
@@ -1327,7 +1542,70 @@ export const MappingManagement: React.FC = () => {
                           className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono"
                         />
                       </div>
+                      <div>
+                        <label className="block text-[11px] text-slate-600 mb-0.5">
+                          UDN Code 2 <span className="text-slate-400">(opsional)</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={udnCode2}
+                          onChange={(e) => setUdnCode2(e.target.value)}
+                          placeholder="Kode ganti pajak/NPWP, dll"
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-slate-600 mb-0.5">
+                          UDN Code 3 <span className="text-slate-400">(opsional)</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={udnCode3}
+                          onChange={(e) => setUdnCode3(e.target.value)}
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono"
+                        />
+                      </div>
                     </div>
+
+                    {udnDuplicateSuggestions.length > 0 && (udnCode2 === '' || udnCode3 === '') && (
+                      <div className="pt-1">
+                        <p className="text-[11px] text-amber-700 mb-1.5 flex items-center gap-1">
+                          <Sparkles className="w-3 h-3" />
+                          Kemungkinan kode lain untuk toko yang sama (nama &amp; sub dist mirip) — cek alamat sebelum menambahkan:
+                        </p>
+                        <div className="space-y-1.5">
+                          {udnDuplicateSuggestions.map((s) => (
+                            <div
+                              key={s.outlet.kodeCustNfiGroup}
+                              onClick={() => handleAddUdnCode(s.outlet.kodeCustNfiGroup)}
+                              className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl cursor-pointer hover:bg-amber-100 hover:border-amber-300 transition-colors flex items-center justify-between gap-2 group"
+                            >
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-bold text-xs text-slate-900 truncate">
+                                    {s.outlet.namaCustomerBaru}
+                                  </span>
+                                  <span className="text-[11px] font-mono text-slate-500 shrink-0">
+                                    ({s.outlet.kodeCustNfiGroup})
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-slate-500 truncate">
+                                  {s.outlet.alamat} • {s.outlet.kecamatan}, {s.outlet.kabupaten}
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <span className="text-[11px] font-bold px-2 py-0.5 rounded-lg bg-amber-200 text-amber-900">
+                                  {s.score}%
+                                </span>
+                                <span className="text-[11px] font-semibold text-amber-700 group-hover:text-amber-900 flex items-center gap-0.5">
+                                  <Plus className="w-3 h-3" /> Tambah
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Geolocation & Address */}
@@ -1454,7 +1732,10 @@ export const MappingManagement: React.FC = () => {
                             type="checkbox"
                             checked={displayWowAll}
                             disabled={klasifikasi !== 'Ring 1'}
-                            onChange={(e) => setDisplayWowAll(e.target.checked)}
+                            onChange={(e) => {
+                              setDisplayWowAll(e.target.checked);
+                              if (!e.target.checked) setBiayaDisplayWow(0);
+                            }}
                             className="rounded text-indigo-600"
                           />
                           <span className="text-xs font-bold text-slate-800">Display Wow All</span>
@@ -1481,7 +1762,10 @@ export const MappingManagement: React.FC = () => {
                             type="checkbox"
                             checked={displayWowHilo}
                             disabled={klasifikasi !== 'Ring 1'}
-                            onChange={(e) => setDisplayWowHilo(e.target.checked)}
+                            onChange={(e) => {
+                              setDisplayWowHilo(e.target.checked);
+                              if (!e.target.checked) setBiayaDisplayWowHilo(0);
+                            }}
                             className="rounded text-indigo-600"
                           />
                           <span className="text-xs font-bold text-slate-800">Display Wow Hilo</span>
