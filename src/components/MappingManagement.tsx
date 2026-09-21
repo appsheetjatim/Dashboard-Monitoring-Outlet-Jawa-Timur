@@ -1,9 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { OutletMapping, OutletPerformance } from '../types';
 import { generateCustomerSoGroupAreaCode } from '../services/outletClassification';
 import { findCandidateMatches, CandidateMatch, calculateNameSimilarity } from '../services/fuzzyMatch';
 import { Tooltip } from './Tooltip';
+import { Toast, ToastState } from './Toast';
 import {
   Plus,
   Edit2,
@@ -114,6 +115,7 @@ export const MappingManagement: React.FC = () => {
 
   // Validation / errors
   const [formError, setFormError] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
 
   // Bulk import state
   const [importResult, setImportResult] = useState<{
@@ -203,6 +205,20 @@ export const MappingManagement: React.FC = () => {
           return a.customerSoGroupArea.localeCompare(b.customerSoGroupArea) * dir;
       }
     });
+  }, [filteredMappings, mapSortField, mapSortDirection]);
+
+  // Pagination for Daftar Mapping Outlet table
+  const MAPPING_PAGE_SIZE = 50;
+  const [mappingPage, setMappingPage] = useState(1);
+  const mappingTotalPages = Math.max(1, Math.ceil(sortedMappings.length / MAPPING_PAGE_SIZE));
+  const paginatedMappings = useMemo(() => {
+    const start = (mappingPage - 1) * MAPPING_PAGE_SIZE;
+    return sortedMappings.slice(start, start + MAPPING_PAGE_SIZE);
+  }, [sortedMappings, mappingPage]);
+
+  // Reset to page 1 whenever filters, search, or sort change
+  useEffect(() => {
+    setMappingPage(1);
   }, [filteredMappings, mapSortField, mapSortDirection]);
 
   const SortIcon: React.FC<{ field: MapSortField }> = ({ field }) => {
@@ -669,19 +685,27 @@ export const MappingManagement: React.FC = () => {
     try {
       if (editingMappingId) {
         await updateMapping(editingMappingId, payload);
+        setToast({ message: `Mapping "${soGroupAreaName.trim()}" berhasil diperbarui.`, type: 'success' });
       } else {
         await createMapping(payload);
+        setToast({ message: `Mapping "${soGroupAreaName.trim()}" berhasil ditambahkan.`, type: 'success' });
       }
       setIsModalOpen(false);
     } catch (err: any) {
       setFormError(err.message || 'Gagal menyimpan mapping.');
+      setToast({ message: err.message || 'Gagal menyimpan mapping.', type: 'error' });
     }
   };
 
   // Delete Mapping
   const handleDelete = async (id: string, name: string) => {
     if (window.confirm(`Yakin ingin menghapus mapping outlet "${name}"? Aksi ini akan dicatat di Log Activity.`)) {
-      await deleteMapping(id);
+      try {
+        await deleteMapping(id);
+        setToast({ message: `Mapping "${name}" berhasil dihapus.`, type: 'success' });
+      } catch (err: any) {
+        setToast({ message: err.message || 'Gagal menghapus mapping.', type: 'error' });
+      }
     }
   };
 
@@ -976,6 +1000,14 @@ export const MappingManagement: React.FC = () => {
           await bulkImportMappings(validItems);
         }
         setImportResult({ successCount: validItems.length, failed });
+        if (validItems.length > 0) {
+          setToast({
+            message: `Bulk import selesai: ${validItems.length} mapping berhasil ditambahkan${
+              failed.length > 0 ? `, ${failed.length} gagal` : ''
+            }.`,
+            type: failed.length > 0 ? 'error' : 'success',
+          });
+        }
       } catch (err: any) {
         setImportResult({ successCount: 0, failed: [{ row: 0, reason: 'Gagal membaca file: ' + err.message }] });
       } finally {
@@ -1189,53 +1221,42 @@ export const MappingManagement: React.FC = () => {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse table-fixed">
-            <colgroup>
-              <col style={{ width: '7%' }} />
-              <col style={{ width: '16%' }} />
-              <col style={{ width: '10%' }} />
-              <col style={{ width: '15%' }} />
-              <col style={{ width: '15%' }} />
-              <col style={{ width: '12%' }} />
-              <col style={{ width: '12%' }} />
-              <col style={{ width: '8%' }} />
-              <col style={{ width: '5%' }} />
-            </colgroup>
+          <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200 text-slate-700 font-semibold">
-                <th className="py-3 px-2 cursor-pointer select-none" onClick={() => handleMapSort('ring')}>
+                <th className="py-3 px-3 cursor-pointer select-none whitespace-nowrap" onClick={() => handleMapSort('ring')}>
                   <div className="flex items-center gap-1">
                     Classification Outlet <SortIcon field="ring" />
                   </div>
                 </th>
-                <th className="py-3 px-2 cursor-pointer select-none" onClick={() => handleMapSort('name')}>
+                <th className="py-3 px-3 cursor-pointer select-none whitespace-nowrap" onClick={() => handleMapSort('name')}>
                   <div className="flex items-center gap-1">
                     Customer SO Group Area &amp; Area <SortIcon field="name" />
                   </div>
                 </th>
-                <th className="py-3 px-2 cursor-pointer select-none" onClick={() => handleMapSort('code')}>
+                <th className="py-3 px-3 cursor-pointer select-none whitespace-nowrap" onClick={() => handleMapSort('code')}>
                   <div className="flex items-center gap-1">
                     Customer SO Group Area Code <SortIcon field="code" />
                   </div>
                 </th>
-                <th className="py-3 px-2 cursor-pointer select-none" onClick={() => handleMapSort('bsp')}>
+                <th className="py-3 px-3 cursor-pointer select-none whitespace-nowrap" onClick={() => handleMapSort('bsp')}>
                   <div className="flex items-center gap-1">
                     Kode BSP (1/2/3) <SortIcon field="bsp" />
                   </div>
                 </th>
-                <th className="py-3 px-2 cursor-pointer select-none" onClick={() => handleMapSort('udn')}>
+                <th className="py-3 px-3 cursor-pointer select-none whitespace-nowrap" onClick={() => handleMapSort('udn')}>
                   <div className="flex items-center gap-1">
                     Kode UDN (1/2/3) <SortIcon field="udn" />
                   </div>
                 </th>
-                <th className="py-3 px-2 text-center">Sarana POSM</th>
-                <th className="py-3 px-2 text-center">Display Wow</th>
-                <th className="py-3 px-2 text-center cursor-pointer select-none" onClick={() => handleMapSort('mds')}>
+                <th className="py-3 px-3 text-center whitespace-nowrap">Sarana POSM</th>
+                <th className="py-3 px-3 text-center whitespace-nowrap">Display Wow</th>
+                <th className="py-3 px-3 text-center cursor-pointer select-none whitespace-nowrap" onClick={() => handleMapSort('mds')}>
                   <div className="flex items-center justify-center gap-1">
                     MDS &amp; PIC <SortIcon field="mds" />
                   </div>
                 </th>
-                <th className="py-3 px-2 text-center">Aksi</th>
+                <th className="py-3 px-3 text-center whitespace-nowrap">Aksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -1246,7 +1267,7 @@ export const MappingManagement: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                sortedMappings.map((m) => {
+                paginatedMappings.map((m) => {
                   const hasAnyRak =
                     m.rak50cm ||
                     m.rak65cm ||
@@ -1257,7 +1278,7 @@ export const MappingManagement: React.FC = () => {
 
                   return (
                     <tr key={m.mappingId} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="py-3 px-2">
+                      <td className="py-3 px-3">
                         <span
                           className={`inline-block text-[11px] font-bold px-2 py-0.5 rounded-md ${
                             m.klasifikasiOutlet === 'Ring 1'
@@ -1270,20 +1291,20 @@ export const MappingManagement: React.FC = () => {
                           {m.klasifikasiOutlet}
                         </span>
                       </td>
-                      <td className="py-3 px-2 break-words">
+                      <td className="py-3 px-3 whitespace-nowrap">
                         <div className="font-bold text-slate-900">{m.customerSoGroupArea}</div>
                         <div className="text-[11px] text-slate-400">
                           {m.kecamatan}, {m.kabupaten}
                         </div>
                       </td>
-                      <td className="py-3 px-2 font-mono font-bold text-slate-900 break-all text-[11px]">
+                      <td className="py-3 px-3 font-mono font-bold text-slate-900 whitespace-nowrap text-[11px]">
                         {m.customerSoGroupAreaCode}
                       </td>
-                      <td className="py-3 px-2 break-words">
+                      <td className="py-3 px-3 whitespace-nowrap">
                         {m.bspCode1 ? (
                           <div>
                             <div className="font-semibold text-slate-800">{m.namaCustomerBsp}</div>
-                            <div className="text-[11px] font-mono text-slate-500 break-all">
+                            <div className="text-[11px] font-mono text-slate-500">
                               {m.bspCode1}
                               {m.bspCode2 ? `, ${m.bspCode2}` : ''}
                             </div>
@@ -1292,11 +1313,11 @@ export const MappingManagement: React.FC = () => {
                           <span className="text-slate-400 italic">Tidak ada</span>
                         )}
                       </td>
-                      <td className="py-3 px-2 break-words">
+                      <td className="py-3 px-3 whitespace-nowrap">
                         {m.udnCode1 ? (
                           <div>
                             <div className="font-semibold text-slate-800">{m.namaCustomerUdn}</div>
-                            <div className="text-[11px] font-mono text-slate-500 break-all">
+                            <div className="text-[11px] font-mono text-slate-500">
                               {m.udnCode1}
                               {m.udnCode2 ? `, ${m.udnCode2}` : ''}
                             </div>
@@ -1305,8 +1326,8 @@ export const MappingManagement: React.FC = () => {
                           <span className="text-slate-400 italic">Tidak ada</span>
                         )}
                       </td>
-                      <td className="py-3 px-2 text-center">
-                        <div className="flex flex-wrap gap-1 justify-center">
+                      <td className="py-3 px-3 text-center">
+                        <div className="flex flex-wrap gap-1 justify-center max-w-[160px] mx-auto">
                           {m.dishub && (
                             <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700">
                               Dishub
@@ -1347,17 +1368,17 @@ export const MappingManagement: React.FC = () => {
                           )}
                         </div>
                       </td>
-                      <td className="py-3 px-2 text-center">
+                      <td className="py-3 px-3 text-center whitespace-nowrap">
                         {m.displayWowAll || m.displayWowHilo ? (
                           <div className="text-[11px]">
                             {m.displayWowAll && (
                               <div className="font-semibold text-amber-700">
-                                Wow All (Rp {m.biayaDisplayWow.toLocaleString('id-ID')})
+                                Wow All ({m.biayaDisplayWow.toLocaleString('id-ID')} Rcg)
                               </div>
                             )}
                             {m.displayWowHilo && (
                               <div className="font-semibold text-emerald-700">
-                                Wow Hilo (Rp {m.biayaDisplayWowHilo.toLocaleString('id-ID')})
+                                Wow Hilo ({m.biayaDisplayWowHilo.toLocaleString('id-ID')} Rcg)
                               </div>
                             )}
                           </div>
@@ -1365,11 +1386,11 @@ export const MappingManagement: React.FC = () => {
                           <span className="text-slate-400 text-[11px]">-</span>
                         )}
                       </td>
-                      <td className="py-3 px-2 text-center break-words">
+                      <td className="py-3 px-3 text-center whitespace-nowrap">
                         <div className="font-semibold text-slate-800">{m.namaMds || '-'}</div>
                         <div className="text-[10px] text-slate-400">PIC: {m.pic || '-'}</div>
                       </td>
-                      <td className="py-3 px-2 text-center whitespace-nowrap">
+                      <td className="py-3 px-3 text-center whitespace-nowrap">
                         <div className="flex items-center justify-center gap-1">
                           <button
                             onClick={() => handleOpenEdit(m)}
@@ -1394,6 +1415,35 @@ export const MappingManagement: React.FC = () => {
             </tbody>
           </table>
         </div>
+
+        {sortedMappings.length > 0 && (
+          <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 text-xs text-slate-600">
+            <span>
+              Menampilkan {(mappingPage - 1) * MAPPING_PAGE_SIZE + 1}
+              –{Math.min(mappingPage * MAPPING_PAGE_SIZE, sortedMappings.length)} dari{' '}
+              {sortedMappings.length.toLocaleString('id-ID')} outlet
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setMappingPage((p) => Math.max(1, p - 1))}
+                disabled={mappingPage === 1}
+                className="px-2.5 py-1.5 rounded-lg border border-slate-200 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
+              >
+                Sebelumnya
+              </button>
+              <span className="px-2 font-semibold text-slate-700">
+                Halaman {mappingPage} / {mappingTotalPages}
+              </span>
+              <button
+                onClick={() => setMappingPage((p) => Math.min(mappingTotalPages, p + 1))}
+                disabled={mappingPage === mappingTotalPages}
+                className="px-2.5 py-1.5 rounded-lg border border-slate-200 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
+              >
+                Berikutnya
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* WIZARD MODAL (TAMBAH / EDIT MAPPING) */}
@@ -2255,6 +2305,8 @@ export const MappingManagement: React.FC = () => {
           </div>
         </div>
       )}
+
+      {toast && <Toast {...toast} onClose={() => setToast(null)} />}
     </div>
   );
 };

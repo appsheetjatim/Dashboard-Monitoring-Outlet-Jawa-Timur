@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { CallPlanItem, OutletPerformance, OutletMapping } from '../types';
 import { Tooltip } from './Tooltip';
+import { Toast, ToastState } from './Toast';
 import {
   Calendar,
   CalendarCheck,
@@ -89,6 +90,7 @@ export const CallPlanManagement: React.FC = () => {
   const [bulkW4, setBulkW4] = useState(true);
   const [bulkFreq, setBulkFreq] = useState(4);
   const [bulkNotice, setBulkNotice] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
 
   // Unscheduled Outlets (Ring 1 & 2 especially) — restricted to the logged-in
   // PIC's accessible Depo, same as Dashboard Performance & Mapping.
@@ -246,8 +248,10 @@ export const CallPlanManagement: React.FC = () => {
 
     if (editingId) {
       await updateCallPlan(editingId, payload);
+      setToast({ message: `Jadwal ${modalOutletName} berhasil diperbarui.`, type: 'success' });
     } else {
       await createCallPlan(payload);
+      setToast({ message: `Jadwal ${modalOutletName} berhasil ditambahkan.`, type: 'success' });
     }
     setIsModalOpen(false);
   };
@@ -255,18 +259,19 @@ export const CallPlanManagement: React.FC = () => {
   const handleDelete = async (plan: CallPlanItem) => {
     if (window.confirm(`Hapus jadwal kunjungan ke ${plan.customerSoGroupArea} untuk MDS ${plan.namaMds}?`)) {
       await deleteCallPlan(plan.callPlanId);
+      setToast({ message: `Jadwal kunjungan ke ${plan.customerSoGroupArea} berhasil dihapus.`, type: 'success' });
     }
   };
 
   // Duplicate Call Plan from previous month
   const handleCopyMonth = async () => {
     if (!selectedMds || selectedMds === 'ALL') {
-      alert('Pilih satu nama MDS pada filter untuk menduplikasi jadwal bulan lalu.');
+      setToast({ message: 'Pilih satu nama MDS pada filter untuk menduplikasi jadwal bulan lalu.', type: 'error' });
       return;
     }
     if (window.confirm(`Duplikasi semua jadwal kunjungan aktif untuk MDS ${selectedMds} ke periode saat ini?`)) {
       const count = await copyCallPlanFromPrevious(selectedMds);
-      alert(`Berhasil menduplikasi ${count} jadwal kunjungan untuk MDS ${selectedMds}.`);
+      setToast({ message: `Berhasil menduplikasi ${count} jadwal kunjungan untuk MDS ${selectedMds}.`, type: 'success' });
     }
   };
 
@@ -341,7 +346,7 @@ export const CallPlanManagement: React.FC = () => {
 
     setIsBulkAssignOpen(false);
     setSelectedOutletCodes([]);
-    alert(`Sukses! ${count} outlet berhasil ditugaskan ke jadwal MDS ${bulkTargetMds}.`);
+    setToast({ message: `Sukses! ${count} outlet berhasil ditugaskan ke jadwal MDS ${bulkTargetMds}.`, type: 'success' });
   };
 
   // Export Call Plan
@@ -493,6 +498,14 @@ export const CallPlanManagement: React.FC = () => {
           await bulkImportCallPlans(validItems);
         }
         setImportResult({ successCount: validItems.length, failed });
+        if (validItems.length > 0) {
+          setToast({
+            message: `Bulk upload selesai: ${validItems.length} jadwal berhasil diimpor${
+              failed.length > 0 ? `, ${failed.length} gagal` : ''
+            }.`,
+            type: failed.length > 0 ? 'error' : 'success',
+          });
+        }
       } catch (err: any) {
         setImportResult({ successCount: 0, failed: [{ row: 0, reason: 'Gagal membaca file: ' + err.message }] });
       } finally {
@@ -1368,6 +1381,8 @@ export const CallPlanManagement: React.FC = () => {
           </div>
         </div>
       )}
+
+      {toast && <Toast {...toast} onClose={() => setToast(null)} />}
     </div>
   );
 };
