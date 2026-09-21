@@ -419,6 +419,11 @@ export const MappingManagement: React.FC = () => {
       return;
     }
 
+    // Outlets outside Ring 1 don't need POSM/Display Wow mapping — only MDS
+    // assignment matters. Force these fields to their empty state regardless
+    // of leftover UI state, so no stale POSM data is saved for non-Ring-1 outlets.
+    const isRing1Submit = klasifikasi === 'Ring 1';
+
     const payload: Omit<OutletMapping, 'mappingId' | 'mappingDate' | 'lastUpdated'> = {
       customerSoGroupAreaCode: generatedCode,
       customerSoGroupArea: soGroupAreaName.trim(),
@@ -437,17 +442,17 @@ export const MappingManagement: React.FC = () => {
       kabupaten,
       kecamatan,
       alamat,
-      dishub,
-      rak50cm,
-      rak65cm,
-      rak75cm,
-      rakDuaSisi,
-      rakPack,
-      rakCustome,
-      displayWowAll,
-      biayaDisplayWow,
-      displayWowHilo,
-      biayaDisplayWowHilo,
+      dishub: isRing1Submit ? dishub : false,
+      rak50cm: isRing1Submit ? rak50cm : false,
+      rak65cm: isRing1Submit ? rak65cm : false,
+      rak75cm: isRing1Submit ? rak75cm : false,
+      rakDuaSisi: isRing1Submit ? rakDuaSisi : false,
+      rakPack: isRing1Submit ? rakPack : false,
+      rakCustome: isRing1Submit ? rakCustome : false,
+      displayWowAll: isRing1Submit ? displayWowAll : false,
+      biayaDisplayWow: isRing1Submit ? biayaDisplayWow : 0,
+      displayWowHilo: isRing1Submit ? displayWowHilo : false,
+      biayaDisplayWowHilo: isRing1Submit ? biayaDisplayWowHilo : 0,
       namaMds,
       pic: picName,
       latitude,
@@ -1385,8 +1390,20 @@ export const MappingManagement: React.FC = () => {
               {/* STEP 4: POSM & MDS ASSIGNMENT */}
               {(wizardStep === 4 || editingMappingId) && (
                 <div className="space-y-4">
+                  {klasifikasi !== 'Ring 1' && (
+                    <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-[11px] text-slate-500">
+                      Outlet dengan klasifikasi <strong>{klasifikasi}</strong> tidak memerlukan mapping POSM/Display Wow — bagian ini dinonaktifkan. Cukup tetapkan Petugas MDS di bawah.
+                    </div>
+                  )}
+
                   {/* Sarana Rak POSM Toggles */}
-                  <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+                  <div
+                    className={`p-4 rounded-2xl border space-y-3 ${
+                      klasifikasi === 'Ring 1'
+                        ? 'bg-slate-50 border-slate-200'
+                        : 'bg-slate-100/60 border-slate-200 opacity-50 pointer-events-none'
+                    }`}
+                  >
                     <span className="text-xs font-bold text-slate-800 block">
                       Sarana Display &amp; Rak POSM
                     </span>
@@ -1408,6 +1425,7 @@ export const MappingManagement: React.FC = () => {
                           <input
                             type="checkbox"
                             checked={item.checked}
+                            disabled={klasifikasi !== 'Ring 1'}
                             onChange={(e) => item.set(e.target.checked)}
                             className="rounded text-indigo-600 focus:ring-indigo-500"
                           />
@@ -1418,7 +1436,13 @@ export const MappingManagement: React.FC = () => {
                   </div>
 
                   {/* Display Wow Section */}
-                  <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+                  <div
+                    className={`p-4 rounded-2xl border space-y-3 ${
+                      klasifikasi === 'Ring 1'
+                        ? 'bg-slate-50 border-slate-200'
+                        : 'bg-slate-100/60 border-slate-200 opacity-50 pointer-events-none'
+                    }`}
+                  >
                     <span className="text-xs font-bold text-slate-800 block">
                       Program Display Wow
                     </span>
@@ -1429,6 +1453,7 @@ export const MappingManagement: React.FC = () => {
                           <input
                             type="checkbox"
                             checked={displayWowAll}
+                            disabled={klasifikasi !== 'Ring 1'}
                             onChange={(e) => setDisplayWowAll(e.target.checked)}
                             className="rounded text-indigo-600"
                           />
@@ -1442,6 +1467,7 @@ export const MappingManagement: React.FC = () => {
                             <input
                               type="number"
                               value={biayaDisplayWow}
+                              disabled={klasifikasi !== 'Ring 1'}
                               onChange={(e) => setBiayaDisplayWow(Number(e.target.value) || 0)}
                               className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs"
                             />
@@ -1454,6 +1480,7 @@ export const MappingManagement: React.FC = () => {
                           <input
                             type="checkbox"
                             checked={displayWowHilo}
+                            disabled={klasifikasi !== 'Ring 1'}
                             onChange={(e) => setDisplayWowHilo(e.target.checked)}
                             className="rounded text-indigo-600"
                           />
@@ -1467,6 +1494,7 @@ export const MappingManagement: React.FC = () => {
                             <input
                               type="number"
                               value={biayaDisplayWowHilo}
+                              disabled={klasifikasi !== 'Ring 1'}
                               onChange={(e) => setBiayaDisplayWowHilo(Number(e.target.value) || 0)}
                               className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs"
                             />
