@@ -45,11 +45,32 @@ export function generateCustomerSoGroupAreaCode(
 /**
  * Calculates days difference between a date string and reference date
  */
+const MONTH_ABBR: Record<string, number> = {
+  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+  jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+};
+
+/**
+ * Parses LAST ORDER values in "Mon-YY" format (e.g. "Aug-26" = August 2026).
+ * Native `new Date("Aug-26")` misparses this as day=26, year=2001 — do NOT use it.
+ */
+export function parseMonYearDate(dateStr: string): Date | null {
+  if (!dateStr) return null;
+  const match = String(dateStr).trim().match(/^([A-Za-z]{3})-(\d{2,4})$/);
+  if (!match) return null;
+  const monthIdx = MONTH_ABBR[match[1].toLowerCase()];
+  if (monthIdx === undefined) return null;
+  let year = parseInt(match[2], 10);
+  if (year < 100) year += 2000;
+  // Use last day of that month so a same-month order is never counted as dormant
+  return new Date(year, monthIdx + 1, 0);
+}
+
 export function isMoreThanTwoMonthsAgo(dateStr: string, refDate: Date = new Date(2026, 8, 20)): boolean {
   if (!dateStr) return true;
-  const parsed = new Date(dateStr);
-  if (isNaN(parsed.getTime())) return false;
-  const diffTime = Math.abs(refDate.getTime() - parsed.getTime());
+  const parsed = parseMonYearDate(dateStr);
+  if (!parsed || isNaN(parsed.getTime())) return true;
+  const diffTime = refDate.getTime() - parsed.getTime();
   const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
   return diffDays > 60;
 }
