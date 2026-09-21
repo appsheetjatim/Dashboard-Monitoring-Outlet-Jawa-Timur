@@ -1,0 +1,6 @@
+{
+  "name": "Dashboard Monitoring Outlet Distributor",
+  "description": "Dashboard monitoring performance outlet distributor, klasifikasi, POSM, dan jadwal kunjungan mingguan MDS",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
