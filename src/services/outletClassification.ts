@@ -29,17 +29,27 @@ export function getRingCodePrefix(ring: string): string {
 
 /**
  * Generates Customer SO Group Area Code:
- * Format: JWTM-{KODE_KLASIFIKASI}-{JUMLAH_KARAKTER}-{NAMA_OUTLET_BERSIH}
- * Example: "BINTANG MAS,TOKO" + Ring 1 -> "JWTM-R1-14-BINTANGMASTOKO"
+ * Format: JWTM-{KODE_KLASIFIKASI}-{JUMLAH_KARAKTER}-{NAMA_OUTLET_BERSIH}-{SUFFIX}
+ * SUFFIX = the last 9 characters (dots kept as-is) of BSP Code 1, or UDN Code 1
+ * when BSP Code 1 is empty (1-sided outlets) — this guarantees the code is
+ * unique even when two different outlets share the exact same cleaned name
+ * and Ring, since a distributor's raw code is already unique by itself.
+ * Example: "BINTANG MAS,TOKO" + Ring 1 + BSP Code "B200011569.0605.M030"
+ *   -> "JWTM-R1-14-BINTANGMASTOKO-0605.M030"
  */
 export function generateCustomerSoGroupAreaCode(
   rawName: string,
-  ring: 'Ring 1' | 'Ring 2' | 'Ring 3' | 'Ring 4'
+  ring: 'Ring 1' | 'Ring 2' | 'Ring 3' | 'Ring 4',
+  sourceCode?: string
 ): string {
   const cleanName = cleanOutletNameForCode(rawName);
   const count = cleanName.length;
   const ringPrefix = getRingCodePrefix(ring);
-  return `JWTM-${ringPrefix}-${count}-${cleanName}`;
+  const base = `JWTM-${ringPrefix}-${count}-${cleanName}`;
+  const trimmedSource = (sourceCode || '').trim();
+  if (!trimmedSource) return base;
+  const suffix = trimmedSource.slice(-9);
+  return `${base}-${suffix}`;
 }
 
 /**
