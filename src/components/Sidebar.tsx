@@ -26,9 +26,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isMobileOpen,
   onCloseMobile,
 }) => {
-  const { performance, mappings, callPlans, logs } = useApp();
+  const { performance, mappings, callPlans, logs, currentUser, accessibleDepo, accessibleMds } = useApp();
 
-  const dormanCount = performance.filter((p) => p.isDormant || p.isChurnRisk).length;
+  const isManager = currentUser?.role === 'Manager';
+
+  // All badge counts below must mirror the SAME access restriction each page
+  // applies internally — otherwise the sidebar shows a Jawa-Timur-wide number
+  // while the page itself (correctly) shows only the PIC's own area, which
+  // looks inconsistent/confusing (e.g. "26640 Dorman" in sidebar vs "2528" on
+  // the actual Watchlist tab for a Supervisor).
+  const accessiblePerformance = isManager
+    ? performance
+    : performance.filter((p) => accessibleDepo.includes(p.depo));
+
+  const accessibleMappings = isManager
+    ? mappings
+    : mappings.filter(
+        (m) => accessibleDepo.includes(m.depoBsp) || accessibleDepo.includes(m.subDistUdn)
+      );
+
+  const accessibleCallPlans = isManager
+    ? callPlans
+    : callPlans.filter((c) =>
+        accessibleMds.some((m) => m.namaMds.toLowerCase() === c.namaMds.toLowerCase())
+      );
+
+  const dormanCount = accessiblePerformance.filter((p) => p.isDormant || p.isChurnRisk).length;
 
   const navItems = [
     {
@@ -42,14 +65,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: 'mapping' as ActiveTab,
       label: 'Mapping & POSM Outlet',
       icon: Layers,
-      badge: `${mappings.length}`,
+      badge: `${accessibleMappings.length}`,
       badgeColor: 'bg-slate-100 text-slate-700',
     },
     {
       id: 'callplan' as ActiveTab,
       label: 'Call Plan MDS',
       icon: CalendarCheck,
-      badge: `${callPlans.length}`,
+      badge: `${accessibleCallPlans.length}`,
       badgeColor: 'bg-indigo-100 text-indigo-700',
     },
     {

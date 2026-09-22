@@ -460,8 +460,8 @@ export const MappingManagement: React.FC = () => {
 
   // Generated Real-time Customer SO Group Area Code
   const generatedCode = useMemo(() => {
-    return generateCustomerSoGroupAreaCode(soGroupAreaName, klasifikasi);
-  }, [klasifikasi, soGroupAreaName]);
+    return generateCustomerSoGroupAreaCode(soGroupAreaName, klasifikasi, bspCode1 || udnCode1);
+  }, [klasifikasi, soGroupAreaName, bspCode1, udnCode1]);
 
   // Open modal for new mapping
   const handleOpenAdd = () => {
@@ -965,7 +965,11 @@ export const MappingManagement: React.FC = () => {
           // Lookup descriptive fields from Performance — BSP side preferred as source of truth
           const primary = bspOutlet || udnOutlet!;
           const nameForCode = bspOutlet?.namaCustomerBaru || udnOutlet?.namaCustomerBaru || 'Outlet';
-          const generatedCodeRow = generateCustomerSoGroupAreaCode(nameForCode, klasifikasiVal);
+          const generatedCodeRow = generateCustomerSoGroupAreaCode(
+            nameForCode,
+            klasifikasiVal,
+            bspCode1Raw || udnCode1Raw
+          );
 
           validItems.push({
             customerSoGroupAreaCode: generatedCodeRow,

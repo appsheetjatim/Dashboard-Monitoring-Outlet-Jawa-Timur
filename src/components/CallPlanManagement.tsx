@@ -9,7 +9,6 @@ import {
   Plus,
   Trash2,
   Edit2,
-  Copy,
   Download,
   Upload,
   Search,
@@ -24,6 +23,7 @@ import {
   Clock,
   CheckCircle2,
   FileDown,
+  Store,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
@@ -33,12 +33,9 @@ export const CallPlanManagement: React.FC = () => {
     callPlans,
     performance,
     mappings,
-    userMds,
-    createCallPlan,
     updateCallPlan,
     deleteCallPlan,
     bulkAssignCallPlan,
-    copyCallPlanFromPrevious,
     bulkImportCallPlans,
     accessibleMds,
     accessibleDepo,
@@ -53,7 +50,8 @@ export const CallPlanManagement: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
 
-  // Single Add / Edit Modal
+  // Edit Modal (editing an EXISTING call plan entry only — creation now goes
+  // through the Wizard below)
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [modalMds, setModalMds] = useState('');
@@ -71,41 +69,50 @@ export const CallPlanManagement: React.FC = () => {
   const [modalFreq, setModalFreq] = useState(4);
   const [modalError, setModalError] = useState<string | null>(null);
 
-  // Bulk Assign Modal State
-  const [isBulkAssignOpen, setIsBulkAssignOpen] = useState(false);
   const [importResult, setImportResult] = useState<{
     successCount: number;
     failed: { row: number; reason: string }[];
   } | null>(null);
   const [isImporting, setIsImporting] = useState(false);
-  const [selectedOutletCodes, setSelectedOutletCodes] = useState<string[]>([]);
-  const [bulkFilterDepo, setBulkFilterDepo] = useState('ALL');
-  const [bulkFilterRing, setBulkFilterRing] = useState('ALL');
-  const [bulkSearch, setBulkSearch] = useState('');
-  const [bulkTargetMds, setBulkTargetMds] = useState('');
-  const [bulkDay, setBulkDay] = useState<CallPlanItem['visitDay']>('Senin');
-  const [bulkW1, setBulkW1] = useState(true);
-  const [bulkW2, setBulkW2] = useState(true);
-  const [bulkW3, setBulkW3] = useState(true);
-  const [bulkW4, setBulkW4] = useState(true);
-  const [bulkFreq, setBulkFreq] = useState(4);
-  const [bulkNotice, setBulkNotice] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
 
-  // Unscheduled Outlets (Ring 1 & 2 especially) — restricted to the logged-in
-  // PIC's accessible Depo, same as Dashboard Performance & Mapping.
+  // Call Plan Wizard — MDS -> Hari -> Checklist Toko (filter Kab/Kec) -> Week
+  // per toko -> Review & Simpan. This is now the ONLY way to create Call Plan
+  // entries (standing plans, not weekly — Week 1-4 are recurrence flags within
+  // an ongoing schedule, not a period that needs re-creating each month).
+  type WizardWeeks = { w1: boolean; w2: boolean; w3: boolean; w4: boolean };
+  const [isWizardOpen, setIsWizardOpen] = useState(false);
+  const [wizardStep, setWizardStep] = useState<1 | 2 | 3 | 4 | 5>(1);
+  const [wizardMds, setWizardMds] = useState('');
+  const [wizardDay, setWizardDay] = useState<CallPlanItem['visitDay']>('Senin');
+  const [wizardKabupaten, setWizardKabupaten] = useState('ALL');
+  const [wizardKecamatan, setWizardKecamatan] = useState('ALL');
+  const [wizardDepo, setWizardDepo] = useState('ALL');
+  const [wizardRing, setWizardRing] = useState('ALL');
+  const [wizardSearch, setWizardSearch] = useState('');
+  const [wizardSelectedCodes, setWizardSelectedCodes] = useState<string[]>([]);
+  const [wizardWeeks, setWizardWeeks] = useState<Record<string, WizardWeeks>>({});
+
+  // Unscheduled Outlets (Ring 1 & 2 especially) — sourced from Mapping (not
+  // raw Performance) since CallPlanItem.customerSoGroupAreaCode is the
+  // Mapping-derived code, not a raw distributor code. Comparing against raw
+  // Performance codes here previously meant this list was never accurate
+  // (the two code spaces never matched).
   const unscheduledOutlets = useMemo(() => {
     const scheduledCodes = new Set(callPlans.map((c) => c.customerSoGroupAreaCode));
-    let pool = performance.filter(
-      (p) =>
-        !scheduledCodes.has(p.kodeCustNfiGroup) &&
-        (p.calculatedRing === 'Ring 1' || p.calculatedRing === 'Ring 2')
+    let pool = mappings.filter(
+      (m) =>
+        m.status === 'Active' &&
+        !scheduledCodes.has(m.customerSoGroupAreaCode) &&
+        (m.klasifikasiOutlet === 'Ring 1' || m.klasifikasiOutlet === 'Ring 2')
     );
     if (!isManager && accessibleDepo.length > 0) {
-      pool = pool.filter((p) => accessibleDepo.includes(p.depo));
+      pool = pool.filter(
+        (m) => accessibleDepo.includes(m.depoBsp) || accessibleDepo.includes(m.subDistUdn)
+      );
     }
     return pool;
-  }, [performance, callPlans, isManager, accessibleDepo]);
+  }, [mappings, callPlans, isManager, accessibleDepo]);
 
   // Filtered Call Plans
   const filteredCallPlans = useMemo(() => {
@@ -151,54 +158,6 @@ export const CallPlanManagement: React.FC = () => {
   }, [filteredCallPlans]);
 
   // Handlers for Single Add / Edit
-  const handleOpenAdd = (defaultOutlet?: OutletPerformance) => {
-    setEditingId(null);
-    setModalError(null);
-    if (defaultOutlet) {
-      setModalOutletCode(defaultOutlet.kodeCustNfiGroup);
-      setModalOutletName(defaultOutlet.namaCustomerBaru);
-      setModalRing(defaultOutlet.calculatedRing);
-      setModalKabupaten(defaultOutlet.kabupaten);
-      setModalKecamatan(defaultOutlet.kecamatan);
-      setModalAlamat(defaultOutlet.alamat);
-      // Auto-suggest frequency based on Ring
-      if (defaultOutlet.calculatedRing === 'Ring 1' || defaultOutlet.calculatedRing === 'Ring 2') {
-        setModalFreq(4);
-        setModalW1(true);
-        setModalW2(true);
-        setModalW3(true);
-        setModalW4(true);
-      } else if (defaultOutlet.calculatedRing === 'Ring 3') {
-        setModalFreq(2);
-        setModalW1(true);
-        setModalW2(false);
-        setModalW3(true);
-        setModalW4(false);
-      } else {
-        setModalFreq(1);
-        setModalW1(true);
-        setModalW2(false);
-        setModalW3(false);
-        setModalW4(false);
-      }
-    } else {
-      setModalOutletCode('');
-      setModalOutletName('');
-      setModalRing('Ring 2');
-      setModalKabupaten('');
-      setModalKecamatan('');
-      setModalAlamat('');
-      setModalFreq(4);
-      setModalW1(true);
-      setModalW2(true);
-      setModalW3(true);
-      setModalW4(true);
-    }
-    setModalMds(userMds[0]?.namaMds || '');
-    setModalVisitDay('Senin');
-    setIsModalOpen(true);
-  };
-
   const handleOpenEdit = (plan: CallPlanItem) => {
     setEditingId(plan.callPlanId);
     setModalError(null);
@@ -228,6 +187,7 @@ export const CallPlanManagement: React.FC = () => {
       setModalError('Nama outlet tidak boleh kosong.');
       return;
     }
+    if (!editingId) return; // this modal is edit-only now
 
     const payload: Omit<CallPlanItem, 'callPlanId'> = {
       namaPic: currentUser?.namaPic || '',
@@ -246,13 +206,8 @@ export const CallPlanManagement: React.FC = () => {
       frequency: modalFreq,
     };
 
-    if (editingId) {
-      await updateCallPlan(editingId, payload);
-      setToast({ message: `Jadwal ${modalOutletName} berhasil diperbarui.`, type: 'success' });
-    } else {
-      await createCallPlan(payload);
-      setToast({ message: `Jadwal ${modalOutletName} berhasil ditambahkan.`, type: 'success' });
-    }
+    await updateCallPlan(editingId, payload);
+    setToast({ message: `Jadwal ${modalOutletName} berhasil diperbarui.`, type: 'success' });
     setIsModalOpen(false);
   };
 
@@ -263,90 +218,168 @@ export const CallPlanManagement: React.FC = () => {
     }
   };
 
-  // Duplicate Call Plan from previous month
-  const handleCopyMonth = async () => {
-    if (!selectedMds || selectedMds === 'ALL') {
-      setToast({ message: 'Pilih satu nama MDS pada filter untuk menduplikasi jadwal bulan lalu.', type: 'error' });
-      return;
-    }
-    if (window.confirm(`Duplikasi semua jadwal kunjungan aktif untuk MDS ${selectedMds} ke periode saat ini?`)) {
-      const count = await copyCallPlanFromPrevious(selectedMds);
-      setToast({ message: `Berhasil menduplikasi ${count} jadwal kunjungan untuk MDS ${selectedMds}.`, type: 'success' });
-    }
+  // ===== CALL PLAN WIZARD =====
+  // Default Week pattern suggested by Ring — user can still override per store.
+  const getDefaultWeeksForRing = (ring: string): WizardWeeks => {
+    if (ring === 'Ring 1' || ring === 'Ring 2') return { w1: true, w2: true, w3: true, w4: true };
+    if (ring === 'Ring 3') return { w1: true, w2: false, w3: true, w4: false };
+    return { w1: true, w2: false, w3: false, w4: false };
   };
 
-  // Bulk Assign selection
-  const handleSelectBulkOutlet = (code: string) => {
-    if (selectedOutletCodes.includes(code)) {
-      setSelectedOutletCodes(selectedOutletCodes.filter((c) => c !== code));
+  const openWizard = (preselectCodes?: string[]) => {
+    setWizardStep(1);
+    setWizardMds('');
+    setWizardDay('Senin');
+    setWizardKabupaten('ALL');
+    setWizardKecamatan('ALL');
+    setWizardDepo('ALL');
+    setWizardRing('ALL');
+    setWizardSearch('');
+    if (preselectCodes && preselectCodes.length > 0) {
+      setWizardSelectedCodes(preselectCodes);
+      const weeksInit: Record<string, WizardWeeks> = {};
+      preselectCodes.forEach((code) => {
+        const m = mappings.find((mm) => mm.customerSoGroupAreaCode === code);
+        weeksInit[code] = getDefaultWeeksForRing(m?.klasifikasiOutlet || 'Ring 2');
+      });
+      setWizardWeeks(weeksInit);
     } else {
-      setSelectedOutletCodes([...selectedOutletCodes, code]);
+      setWizardSelectedCodes([]);
+      setWizardWeeks({});
     }
+    setIsWizardOpen(true);
   };
 
-  const handleSelectAllBulk = (outlets: OutletPerformance[]) => {
-    if (selectedOutletCodes.length === outlets.length) {
-      setSelectedOutletCodes([]);
-    } else {
-      setSelectedOutletCodes(outlets.map((o) => o.kodeCustNfiGroup));
-    }
+  const closeWizard = () => setIsWizardOpen(false);
+
+  const toggleWizardOutlet = (mapping: OutletMapping) => {
+    const code = mapping.customerSoGroupAreaCode;
+    setWizardSelectedCodes((prev) =>
+      prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code]
+    );
+    setWizardWeeks((prev) => {
+      if (prev[code]) return prev; // keep existing choice if toggled back on
+      return { ...prev, [code]: getDefaultWeeksForRing(mapping.klasifikasiOutlet) };
+    });
   };
 
-  // Bulk Assign outlet pool: restricted to the logged-in PIC's accessible Depo,
-  // then narrowed by the (previously unused) bulkFilterDepo/bulkFilterRing/bulkSearch state
-  const BULK_MAX_RESULTS = 100;
-  const bulkOutletBasePool = useMemo(() => {
+  const setWizardWeekForCode = (code: string, key: keyof WizardWeeks, value: boolean) => {
+    setWizardWeeks((prev) => ({
+      ...prev,
+      [code]: { ...(prev[code] || { w1: false, w2: false, w3: false, w4: false }), [key]: value },
+    }));
+  };
+
+  // Wizard Step 3 outlet pool: sourced from Mapping (Active), access-restricted,
+  // excluding outlets that already have a schedule for the chosen MDS + Day.
+  const wizardBasePool = useMemo(() => {
+    let pool = mappings.filter((m) => m.status === 'Active');
     if (!isManager && accessibleDepo.length > 0) {
-      return performance.filter((p) => accessibleDepo.includes(p.depo));
-    }
-    return performance;
-  }, [performance, isManager, accessibleDepo]);
-
-  const bulkOutletDepoOptions = useMemo(
-    () => Array.from(new Set(bulkOutletBasePool.map((p) => p.depo).filter(Boolean))),
-    [bulkOutletBasePool]
-  );
-
-  const bulkOutletResults = useMemo(() => {
-    let pool = bulkOutletBasePool;
-    if (bulkFilterDepo !== 'ALL') pool = pool.filter((p) => p.depo === bulkFilterDepo);
-    if (bulkFilterRing !== 'ALL') pool = pool.filter((p) => p.calculatedRing === bulkFilterRing);
-    if (bulkSearch.trim()) {
-      const q = bulkSearch.trim().toLowerCase();
       pool = pool.filter(
-        (p) => p.namaCustomerBaru.toLowerCase().includes(q) || p.kodeCustNfiGroup.toLowerCase().includes(q)
+        (m) => accessibleDepo.includes(m.depoBsp) || accessibleDepo.includes(m.subDistUdn)
       );
     }
     return pool;
-  }, [bulkOutletBasePool, bulkFilterDepo, bulkFilterRing, bulkSearch]);
+  }, [mappings, isManager, accessibleDepo]);
 
-  const bulkOutletDisplayed = useMemo(
-    () => bulkOutletResults.slice(0, BULK_MAX_RESULTS),
-    [bulkOutletResults]
+  const wizardKabupatenOptions = useMemo(
+    () => Array.from(new Set(wizardBasePool.map((m) => m.kabupaten).filter(Boolean))).sort(),
+    [wizardBasePool]
+  );
+  const wizardKecamatanOptions = useMemo(() => {
+    const pool = wizardKabupaten === 'ALL' ? wizardBasePool : wizardBasePool.filter((m) => m.kabupaten === wizardKabupaten);
+    return Array.from(new Set(pool.map((m) => m.kecamatan).filter(Boolean))).sort();
+  }, [wizardBasePool, wizardKabupaten]);
+  const wizardDepoOptions = useMemo(
+    () => Array.from(new Set(wizardBasePool.map((m) => m.depoBsp).filter(Boolean))).sort(),
+    [wizardBasePool]
   );
 
-  const handleExecuteBulkAssign = async () => {
-    if (!bulkTargetMds) {
-      setBulkNotice('Pilih petugas MDS.');
-      return;
-    }
-    if (selectedOutletCodes.length === 0) {
-      setBulkNotice('Pilih minimal satu outlet.');
-      return;
-    }
+  const wizardAlreadyScheduledKeys = useMemo(
+    () => new Set(callPlans.map((c) => `${c.namaMds.toLowerCase()}|${c.customerSoGroupAreaCode}|${c.visitDay}`)),
+    [callPlans]
+  );
 
-    const targetOutlets = performance.filter((p) => selectedOutletCodes.includes(p.kodeCustNfiGroup));
-    const count = await bulkAssignCallPlan(
-      targetOutlets,
-      bulkTargetMds,
-      bulkDay,
-      { w1: bulkW1, w2: bulkW2, w3: bulkW3, w4: bulkW4 },
-      bulkFreq
-    );
+  const WIZARD_MAX_RESULTS = 100;
+  const wizardOutletResults = useMemo(() => {
+    let pool = wizardBasePool;
+    if (wizardKabupaten !== 'ALL') pool = pool.filter((m) => m.kabupaten === wizardKabupaten);
+    if (wizardKecamatan !== 'ALL') pool = pool.filter((m) => m.kecamatan === wizardKecamatan);
+    if (wizardDepo !== 'ALL') pool = pool.filter((m) => m.depoBsp === wizardDepo);
+    if (wizardRing !== 'ALL') pool = pool.filter((m) => m.klasifikasiOutlet === wizardRing);
+    if (wizardSearch.trim()) {
+      const q = wizardSearch.trim().toLowerCase();
+      pool = pool.filter(
+        (m) => m.customerSoGroupArea.toLowerCase().includes(q) || m.customerSoGroupAreaCode.toLowerCase().includes(q)
+      );
+    }
+    if (wizardMds && wizardDay) {
+      pool = pool.filter(
+        (m) => !wizardAlreadyScheduledKeys.has(`${wizardMds.toLowerCase()}|${m.customerSoGroupAreaCode}|${wizardDay}`)
+      );
+    }
+    return pool;
+  }, [
+    wizardBasePool,
+    wizardKabupaten,
+    wizardKecamatan,
+    wizardDepo,
+    wizardRing,
+    wizardSearch,
+    wizardMds,
+    wizardDay,
+    wizardAlreadyScheduledKeys,
+  ]);
+  const wizardOutletDisplayed = useMemo(
+    () => wizardOutletResults.slice(0, WIZARD_MAX_RESULTS),
+    [wizardOutletResults]
+  );
 
-    setIsBulkAssignOpen(false);
-    setSelectedOutletCodes([]);
-    setToast({ message: `Sukses! ${count} outlet berhasil ditugaskan ke jadwal MDS ${bulkTargetMds}.`, type: 'success' });
+  // Combined Performance metrics (BSP + UDN summed) for each Mapping outlet —
+  // valid because Avg Sales / AVG PA are monthly averages; summing two
+  // channels' monthly averages gives the correct combined monthly figure.
+  const performanceByCode = useMemo(() => {
+    const map = new Map<string, OutletPerformance>();
+    performance.forEach((p) => map.set(p.kodeCustNfiGroup, p));
+    return map;
+  }, [performance]);
+
+  const getCombinedMetrics = (mapping: OutletMapping) => {
+    const bsp = mapping.bspCode1 ? performanceByCode.get(mapping.bspCode1) : undefined;
+    const udn = mapping.udnCode1 ? performanceByCode.get(mapping.udnCode1) : undefined;
+    return {
+      omset: (bsp?.omset2026 || 0) + (udn?.omset2026 || 0),
+      avgSales: (bsp?.avgSales2026 || 0) + (udn?.avgSales2026 || 0),
+      sku: (bsp?.sku2026 || 0) + (udn?.sku2026 || 0),
+      avgPa: (bsp?.avgPa2026 || 0) + (udn?.avgPa2026 || 0),
+    };
+  };
+
+  const wizardSelectedMappings = useMemo(() => {
+    return wizardSelectedCodes
+      .map((code) => mappings.find((m) => m.customerSoGroupAreaCode === code))
+      .filter((m): m is OutletMapping => !!m);
+  }, [wizardSelectedCodes, mappings]);
+
+  const canGoWizardStep2 = !!wizardMds;
+  const canGoWizardStep3 = !!wizardMds && !!wizardDay;
+  const canGoWizardStep4 = wizardSelectedCodes.length > 0;
+  const canGoWizardStep5 = wizardSelectedCodes.every((c) => {
+    const w = wizardWeeks[c];
+    return !!w && (w.w1 || w.w2 || w.w3 || w.w4);
+  });
+
+  const handleFinalizeWizard = async () => {
+    const items = wizardSelectedMappings.map((m) => {
+      const w = wizardWeeks[m.customerSoGroupAreaCode] || { w1: false, w2: false, w3: false, w4: false };
+      return { mapping: m, week1: w.w1, week2: w.w2, week3: w.w3, week4: w.w4 };
+    });
+    const count = await bulkAssignCallPlan(items, wizardMds, wizardDay);
+    setIsWizardOpen(false);
+    setToast({
+      message: `Sukses! ${count} jadwal kunjungan dibuat untuk MDS ${wizardMds} (Hari ${wizardDay}).`,
+      type: 'success',
+    });
   };
 
   // Export Call Plan
@@ -560,31 +593,12 @@ export const CallPlanManagement: React.FC = () => {
 
           <div className="flex flex-wrap items-center gap-2">
             <button
-              onClick={() => handleOpenAdd()}
+              onClick={() => openWizard()}
               className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors flex items-center gap-1.5"
             >
-              <Plus className="w-4 h-4" />
-              <span>Tambah Call Plan</span>
+              <Sparkles className="w-4 h-4" />
+              <span>Buat Call Plan</span>
             </button>
-
-            <button
-              onClick={() => setIsBulkAssignOpen(true)}
-              className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold rounded-xl border border-indigo-200 transition-colors flex items-center gap-1.5"
-            >
-              <Sparkles className="w-4 h-4 text-indigo-600" />
-              <span>Bulk Assign Outlets</span>
-            </button>
-
-            {selectedMds !== 'ALL' && (
-              <button
-                onClick={handleCopyMonth}
-                className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition-colors flex items-center gap-1.5"
-                title="Salin semua jadwal dari bulan sebelumnya untuk MDS terpilih"
-              >
-                <Copy className="w-3.5 h-3.5" />
-                <span>Salin Bulan Lalu</span>
-              </button>
-            )}
 
             <button
               onClick={handleExport}
@@ -762,10 +776,7 @@ export const CallPlanManagement: React.FC = () => {
               </div>
             </div>
             <button
-              onClick={() => {
-                setSelectedOutletCodes(unscheduledOutlets.map((o) => o.kodeCustNfiGroup));
-                setIsBulkAssignOpen(true);
-              }}
+              onClick={() => openWizard(unscheduledOutlets.map((o) => o.customerSoGroupAreaCode))}
               className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl shadow-xs self-start sm:self-auto transition-colors"
             >
               Jadwalkan Semua Sekaligus
@@ -775,17 +786,17 @@ export const CallPlanManagement: React.FC = () => {
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
             {unscheduledOutlets.slice(0, 6).map((out) => (
               <div
-                key={out.kodeCustNfiGroup}
+                key={out.customerSoGroupAreaCode}
                 className="bg-white p-3 rounded-xl border border-amber-200 flex items-center justify-between"
               >
                 <div>
-                  <div className="font-bold text-xs text-slate-900">{out.namaCustomerBaru}</div>
+                  <div className="font-bold text-xs text-slate-900">{out.customerSoGroupArea}</div>
                   <div className="text-[11px] text-slate-500">
-                    {out.depo} • <strong className="text-amber-700">{out.calculatedRing}</strong>
+                    {out.depoBsp || out.subDistUdn} • <strong className="text-amber-700">{out.klasifikasiOutlet}</strong>
                   </div>
                 </div>
                 <button
-                  onClick={() => handleOpenAdd(out)}
+                  onClick={() => openWizard([out.customerSoGroupAreaCode])}
                   className="px-2.5 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 text-[11px] font-bold rounded-lg transition-colors"
                 >
                   + Jadwalkan
@@ -997,7 +1008,7 @@ export const CallPlanManagement: React.FC = () => {
           <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 my-8">
             <div className="flex items-center justify-between pb-4 border-b border-slate-100">
               <h3 className="font-bold text-base text-slate-900">
-                {editingId ? 'Edit Call Plan Kunjungan' : 'Tambah Call Plan Kunjungan'}
+                Edit Call Plan Kunjungan
               </h3>
               <button
                 onClick={() => setIsModalOpen(false)}
@@ -1163,149 +1174,213 @@ export const CallPlanManagement: React.FC = () => {
         </div>
       )}
 
-      {/* BULK ASSIGN MODAL */}
-      {isBulkAssignOpen && (
+      {/* CALL PLAN WIZARD */}
+      {isWizardOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
-          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 sm:p-7 shadow-2xl border border-slate-100 my-8">
+          <div className="bg-white rounded-3xl max-w-3xl w-full p-6 sm:p-7 shadow-2xl border border-slate-100 my-8">
             <div className="flex items-center justify-between pb-4 border-b border-slate-100">
               <div className="flex items-center gap-2">
                 <Sparkles className="w-5 h-5 text-indigo-600" />
-                <h3 className="font-bold text-base text-slate-900">
-                  Bulk Assign Outlets ke Call Plan MDS
-                </h3>
+                <div>
+                  <h3 className="font-bold text-base text-slate-900">Wizard Call Plan Kunjungan</h3>
+                  <p className="text-xs text-slate-500">
+                    Jadwal berlaku terus (standing plan) sampai diubah manual — bukan mingguan/bulanan.
+                  </p>
+                </div>
               </div>
               <button
-                onClick={() => setIsBulkAssignOpen(false)}
+                onClick={closeWizard}
                 className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {bulkNotice && (
-              <div className="mt-4 p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 shrink-0" />
-                <span>{bulkNotice}</span>
+            {/* Step indicator */}
+            <div className="flex items-center gap-1.5 py-4 overflow-x-auto">
+              {[
+                { step: 1, label: 'Pilih MDS' },
+                { step: 2, label: 'Hari Kunjungan' },
+                { step: 3, label: 'Checklist Toko' },
+                { step: 4, label: 'Set Minggu' },
+                { step: 5, label: 'Review & Simpan' },
+              ].map((s, idx) => (
+                <React.Fragment key={s.step}>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <div
+                      className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold ${
+                        wizardStep === s.step
+                          ? 'bg-indigo-600 text-white'
+                          : wizardStep > s.step
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : 'bg-slate-100 text-slate-400'
+                      }`}
+                    >
+                      {wizardStep > s.step ? '✓' : s.step}
+                    </div>
+                    <span
+                      className={`text-[11px] whitespace-nowrap ${
+                        wizardStep === s.step ? 'font-bold text-slate-900' : 'text-slate-400'
+                      }`}
+                    >
+                      {s.label}
+                    </span>
+                  </div>
+                  {idx < 4 && <ChevronRight className="w-3.5 h-3.5 text-slate-300 shrink-0" />}
+                </React.Fragment>
+              ))}
+            </div>
+
+            {/* STEP 1: PILIH MDS */}
+            {wizardStep === 1 && (
+              <div className="space-y-3">
+                <p className="text-xs text-slate-500">Pilih petugas MDS yang akan dijadwalkan:</p>
+                <div className="max-h-72 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-2xl">
+                  {accessibleMds.length === 0 ? (
+                    <div className="p-4 text-center text-xs text-slate-400">
+                      Tidak ada MDS yang tersedia untuk akun Anda.
+                    </div>
+                  ) : (
+                    accessibleMds.map((m) => (
+                      <button
+                        type="button"
+                        key={m.namaMds}
+                        onClick={() => setWizardMds(m.namaMds)}
+                        className={`w-full text-left p-3 flex items-center justify-between transition-colors ${
+                          wizardMds === m.namaMds ? 'bg-indigo-50' : 'hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <UserCheck
+                            className={`w-4 h-4 ${wizardMds === m.namaMds ? 'text-indigo-600' : 'text-slate-300'}`}
+                          />
+                          <span className={`text-xs ${wizardMds === m.namaMds ? 'font-bold text-indigo-900' : 'text-slate-800'}`}>
+                            {m.namaMds}
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-slate-400">{m.area}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+                <div className="pt-2 flex justify-end">
+                  <button
+                    type="button"
+                    disabled={!canGoWizardStep2}
+                    onClick={() => setWizardStep(2)}
+                    className="px-5 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-xs disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Lanjut →
+                  </button>
+                </div>
               </div>
             )}
 
-            <div className="mt-4 space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Tugaskan ke Petugas MDS *
-                  </label>
-                  <select
-                    value={bulkTargetMds}
-                    onChange={(e) => setBulkTargetMds(e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-semibold text-slate-900"
-                  >
-                    <option value="">Pilih Petugas MDS...</option>
-                    {accessibleMds.map((m) => (
-                      <option key={m.namaMds} value={m.namaMds}>
-                        {m.namaMds} ({m.area})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Hari Kunjungan *
-                  </label>
-                  <select
-                    value={bulkDay}
-                    onChange={(e) => setBulkDay(e.target.value as any)}
-                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-semibold text-slate-900"
-                  >
-                    {daysOfWeek.map((d) => (
-                      <option key={d} value={d}>
-                        Hari {d}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Minggu & Frekuensi */}
-              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-800">
-                  Pola Minggu:
-                </span>
-                <div className="flex items-center gap-2">
-                  {[
-                    { label: 'W1', checked: bulkW1, set: setBulkW1 },
-                    { label: 'W2', checked: bulkW2, set: setBulkW2 },
-                    { label: 'W3', checked: bulkW3, set: setBulkW3 },
-                    { label: 'W4', checked: bulkW4, set: setBulkW4 },
-                  ].map((w) => (
-                    <label key={w.label} className="flex items-center gap-1 text-xs cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={w.checked}
-                        onChange={(e) => {
-                          w.set(e.target.checked);
-                          const sum =
-                            (w.label === 'W1' ? (e.target.checked ? 1 : 0) : bulkW1 ? 1 : 0) +
-                            (w.label === 'W2' ? (e.target.checked ? 1 : 0) : bulkW2 ? 1 : 0) +
-                            (w.label === 'W3' ? (e.target.checked ? 1 : 0) : bulkW3 ? 1 : 0) +
-                            (w.label === 'W4' ? (e.target.checked ? 1 : 0) : bulkW4 ? 1 : 0);
-                          setBulkFreq(sum);
-                        }}
-                        className="rounded text-indigo-600"
-                      />
-                      <span className="font-semibold">{w.label}</span>
-                    </label>
+            {/* STEP 2: HARI KUNJUNGAN */}
+            {wizardStep === 2 && (
+              <div className="space-y-3">
+                <p className="text-xs text-slate-500">
+                  Pilih hari kunjungan untuk MDS <strong>{wizardMds}</strong>:
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                  {daysOfWeek.map((d) => (
+                    <button
+                      type="button"
+                      key={d}
+                      onClick={() => setWizardDay(d)}
+                      className={`p-3.5 rounded-2xl border text-sm font-bold flex items-center justify-center gap-2 transition-colors ${
+                        wizardDay === d
+                          ? 'bg-indigo-600 border-indigo-600 text-white'
+                          : 'bg-white border-slate-200 text-slate-700 hover:border-indigo-300'
+                      }`}
+                    >
+                      <Calendar className="w-4 h-4" />
+                      {d}
+                    </button>
                   ))}
-                  <span className="text-xs text-slate-500 ml-2">({bulkFreq}x/bln)</span>
                 </div>
-              </div>
-
-              {/* Outlet Selection Table */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs font-bold text-slate-800">
-                    Pilih Outlet ({selectedOutletCodes.length} dipilih dari {bulkOutletResults.length.toLocaleString('id-ID')} hasil):
-                  </label>
+                <div className="pt-2 flex justify-between">
                   <button
                     type="button"
-                    onClick={() => handleSelectAllBulk(bulkOutletDisplayed)}
-                    className="text-xs text-indigo-600 hover:underline font-semibold"
+                    onClick={() => setWizardStep(1)}
+                    className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-xl"
                   >
-                    {selectedOutletCodes.length === bulkOutletDisplayed.length ? 'Batalkan Semua' : 'Pilih Semua (halaman ini)'}
+                    ← Kembali
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!canGoWizardStep3}
+                    onClick={() => setWizardStep(3)}
+                    className="px-5 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-xs disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Lanjut →
                   </button>
                 </div>
+              </div>
+            )}
+
+            {/* STEP 3: CHECKLIST TOKO */}
+            {wizardStep === 3 && (
+              <div className="space-y-3">
+                <p className="text-xs text-slate-500">
+                  Centang toko yang dikunjungi <strong>{wizardMds}</strong> pada hari <strong>{wizardDay}</strong>{' '}
+                  ({wizardSelectedCodes.length} dipilih dari {wizardOutletResults.length.toLocaleString('id-ID')} hasil):
+                </p>
 
                 {!isManager && (
-                  <p className="text-[11px] text-indigo-600 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-1.5 mb-2">
-                    Daftar otomatis dibatasi ke Depo yang menjadi tanggung jawab Anda.
+                  <p className="text-[11px] text-indigo-600 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-1.5">
+                    Daftar otomatis dibatasi ke Depo yang menjadi tanggung jawab Anda. Outlet yang sudah punya jadwal untuk MDS &amp; hari ini otomatis disembunyikan.
                   </p>
                 )}
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-2">
-                  <div className="relative sm:col-span-1">
-                    <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input
-                      type="text"
-                      value={bulkSearch}
-                      onChange={(e) => setBulkSearch(e.target.value)}
-                      placeholder="Cari nama/kode outlet..."
-                      className="w-full pl-8 pr-3 py-2 text-xs rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                    />
-                  </div>
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={wizardSearch}
+                    onChange={(e) => setWizardSearch(e.target.value)}
+                    placeholder="Cari nama/kode outlet..."
+                    className="w-full pl-8 pr-3 py-2 text-xs rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   <select
-                    value={bulkFilterDepo}
-                    onChange={(e) => setBulkFilterDepo(e.target.value)}
+                    value={wizardKabupaten}
+                    onChange={(e) => {
+                      setWizardKabupaten(e.target.value);
+                      setWizardKecamatan('ALL');
+                    }}
                     className="text-[11px] px-2.5 py-2 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
                   >
-                    <option value="ALL">Semua Depo</option>
-                    {bulkOutletDepoOptions.map((v) => (
+                    <option value="ALL">Semua Kabupaten</option>
+                    {wizardKabupatenOptions.map((v) => (
                       <option key={v} value={v}>{v}</option>
                     ))}
                   </select>
                   <select
-                    value={bulkFilterRing}
-                    onChange={(e) => setBulkFilterRing(e.target.value)}
+                    value={wizardKecamatan}
+                    onChange={(e) => setWizardKecamatan(e.target.value)}
+                    className="text-[11px] px-2.5 py-2 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                  >
+                    <option value="ALL">Semua Kecamatan</option>
+                    {wizardKecamatanOptions.map((v) => (
+                      <option key={v} value={v}>{v}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={wizardDepo}
+                    onChange={(e) => setWizardDepo(e.target.value)}
+                    className="text-[11px] px-2.5 py-2 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                  >
+                    <option value="ALL">Semua Depo</option>
+                    {wizardDepoOptions.map((v) => (
+                      <option key={v} value={v}>{v}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={wizardRing}
+                    onChange={(e) => setWizardRing(e.target.value)}
                     className="text-[11px] px-2.5 py-2 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
                   >
                     <option value="ALL">Semua Ring</option>
@@ -1316,68 +1391,218 @@ export const CallPlanManagement: React.FC = () => {
                   </select>
                 </div>
 
-                <div className="max-h-60 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-2xl">
-                  {bulkOutletDisplayed.length === 0 ? (
+                <div className="max-h-72 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-2xl">
+                  {wizardOutletDisplayed.length === 0 ? (
                     <div className="p-4 text-center text-xs text-slate-400">
                       Tidak ada outlet yang sesuai filter/pencarian.
                     </div>
                   ) : (
-                    bulkOutletDisplayed.map((out) => {
-                      const isSelected = selectedOutletCodes.includes(out.kodeCustNfiGroup);
+                    wizardOutletDisplayed.map((m) => {
+                      const isSelected = wizardSelectedCodes.includes(m.customerSoGroupAreaCode);
+                      const metrics = getCombinedMetrics(m);
                       return (
                         <div
-                          key={out.kodeCustNfiGroup}
-                          onClick={() => handleSelectBulkOutlet(out.kodeCustNfiGroup)}
-                          className={`p-3 cursor-pointer flex items-center justify-between transition-colors ${
-                            isSelected ? 'bg-indigo-50/70 font-semibold' : 'hover:bg-slate-50'
+                          key={m.customerSoGroupAreaCode}
+                          onClick={() => toggleWizardOutlet(m)}
+                          className={`p-3 cursor-pointer flex items-center justify-between gap-2 transition-colors ${
+                            isSelected ? 'bg-indigo-50/70' : 'hover:bg-slate-50'
                           }`}
                         >
-                          <div className="flex items-center gap-2.5">
+                          <div className="flex items-start gap-2.5 min-w-0">
                             <input
                               type="checkbox"
                               checked={isSelected}
                               onChange={() => {}} // handled by parent onClick
-                              className="rounded text-indigo-600"
+                              className="mt-0.5 rounded text-indigo-600 shrink-0"
                             />
-                            <div>
-                              <p className="text-xs text-slate-900">{out.namaCustomerBaru}</p>
-                              <p className="text-[11px] text-slate-400">
-                                {out.kodeCustNfiGroup} • {out.depo} • {out.kabupaten}
+                            <div className="min-w-0">
+                              <p className="text-xs font-bold text-slate-900 truncate">{m.customerSoGroupArea}</p>
+                              <p className="text-[11px] text-slate-400 truncate">
+                                {m.customerSoGroupAreaCode} • {m.kecamatan}, {m.kabupaten}
+                              </p>
+                              <p className="text-[10px] text-slate-500 mt-0.5">
+                                Omset: Rp {metrics.omset.toLocaleString('id-ID')} • Avg Sales: Rp{' '}
+                                {metrics.avgSales.toLocaleString('id-ID')} • SKU: {metrics.sku.toFixed(1)} • PA:{' '}
+                                {metrics.avgPa.toFixed(1)}
                               </p>
                             </div>
                           </div>
-                          <span className="text-[11px] px-2 py-0.5 rounded bg-slate-100 text-slate-700">
-                            {out.calculatedRing}
+                          <span className="text-[11px] px-2 py-0.5 rounded bg-slate-100 text-slate-700 shrink-0">
+                            {m.klasifikasiOutlet}
                           </span>
                         </div>
                       );
                     })
                   )}
                 </div>
-                {bulkOutletResults.length > BULK_MAX_RESULTS && (
-                  <p className="text-[11px] text-amber-600 mt-1.5">
-                    Menampilkan {BULK_MAX_RESULTS} dari {bulkOutletResults.length.toLocaleString('id-ID')} hasil — persempit dengan pencarian atau filter Depo/Ring untuk melihat outlet lainnya.
+                {wizardOutletResults.length > WIZARD_MAX_RESULTS && (
+                  <p className="text-[11px] text-amber-600">
+                    Menampilkan {WIZARD_MAX_RESULTS} dari {wizardOutletResults.length.toLocaleString('id-ID')} hasil — persempit dengan pencarian atau filter Kabupaten/Kecamatan/Depo/Ring untuk melihat outlet lainnya.
                   </p>
                 )}
-              </div>
 
-              <div className="pt-3 flex justify-end gap-2 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setIsBulkAssignOpen(false)}
-                  className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-xl"
-                >
-                  Batal
-                </button>
-                <button
-                  type="button"
-                  onClick={handleExecuteBulkAssign}
-                  className="px-6 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-xs"
-                >
-                  Tugaskan {selectedOutletCodes.length} Outlet
-                </button>
+                <div className="pt-2 flex justify-between">
+                  <button
+                    type="button"
+                    onClick={() => setWizardStep(2)}
+                    className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-xl"
+                  >
+                    ← Kembali
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!canGoWizardStep4}
+                    onClick={() => setWizardStep(4)}
+                    className="px-5 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-xs disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Lanjut ({wizardSelectedCodes.length} toko) →
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
+
+            {/* STEP 4: SET MINGGU PER TOKO */}
+            {wizardStep === 4 && (
+              <div className="space-y-3">
+                <p className="text-xs text-slate-500">
+                  Atur Minggu 1–4 untuk tiap toko (default disarankan sesuai Ring, bisa diubah per toko):
+                </p>
+
+                <div className="max-h-96 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-2xl">
+                  {wizardSelectedMappings.map((m) => {
+                    const w = wizardWeeks[m.customerSoGroupAreaCode] || {
+                      w1: false,
+                      w2: false,
+                      w3: false,
+                      w4: false,
+                    };
+                    const freq = [w.w1, w.w2, w.w3, w.w4].filter(Boolean).length;
+                    const hasNoWeek = freq === 0;
+                    return (
+                      <div key={m.customerSoGroupAreaCode} className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-slate-900 truncate">{m.customerSoGroupArea}</p>
+                          <p className="text-[11px] text-slate-400 truncate">
+                            {m.customerSoGroupAreaCode} • {m.klasifikasiOutlet}
+                          </p>
+                          {hasNoWeek && (
+                            <p className="text-[11px] text-rose-600 font-semibold mt-0.5">
+                              Pilih minimal 1 minggu
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {(['w1', 'w2', 'w3', 'w4'] as const).map((wk, idx) => (
+                            <label
+                              key={wk}
+                              className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-bold cursor-pointer flex items-center gap-1 ${
+                                w[wk]
+                                  ? 'bg-indigo-600 border-indigo-600 text-white'
+                                  : 'bg-white border-slate-200 text-slate-500 hover:border-indigo-300'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={w[wk]}
+                                onChange={(e) => setWizardWeekForCode(m.customerSoGroupAreaCode, wk, e.target.checked)}
+                                className="hidden"
+                              />
+                              W{idx + 1}
+                            </label>
+                          ))}
+                          <span className="text-[11px] text-slate-400 ml-1">({freq}x/bln)</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="pt-2 flex justify-between">
+                  <button
+                    type="button"
+                    onClick={() => setWizardStep(3)}
+                    className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-xl"
+                  >
+                    ← Kembali
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!canGoWizardStep5}
+                    onClick={() => setWizardStep(5)}
+                    className="px-5 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-xs disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Lanjut ke Review →
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* STEP 5: REVIEW & SIMPAN */}
+            {wizardStep === 5 && (
+              <div className="space-y-3">
+                <div className="p-3.5 bg-indigo-50 border border-indigo-100 rounded-2xl flex flex-wrap items-center gap-x-6 gap-y-1 text-xs">
+                  <span>
+                    <strong className="text-slate-900">MDS:</strong> {wizardMds}
+                  </span>
+                  <span>
+                    <strong className="text-slate-900">Hari:</strong> {wizardDay}
+                  </span>
+                  <span>
+                    <strong className="text-slate-900">Jumlah Toko:</strong> {wizardSelectedMappings.length}
+                  </span>
+                </div>
+
+                <div className="max-h-80 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-2xl">
+                  {wizardSelectedMappings.map((m) => {
+                    const w = wizardWeeks[m.customerSoGroupAreaCode] || {
+                      w1: false,
+                      w2: false,
+                      w3: false,
+                      w4: false,
+                    };
+                    const freq = [w.w1, w.w2, w.w3, w.w4].filter(Boolean).length;
+                    return (
+                      <div key={m.customerSoGroupAreaCode} className="p-3 flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-slate-900 truncate">{m.customerSoGroupArea}</p>
+                          <p className="text-[11px] text-slate-400 truncate">{m.customerSoGroupAreaCode}</p>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          {(['w1', 'w2', 'w3', 'w4'] as const).map((wk, idx) => (
+                            <span
+                              key={wk}
+                              className={`w-5 h-5 rounded-md text-[10px] font-bold flex items-center justify-center ${
+                                w[wk] ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-300'
+                              }`}
+                            >
+                              {idx + 1}
+                            </span>
+                          ))}
+                          <span className="text-[11px] text-slate-500 ml-1.5">{freq}x/bln</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="pt-2 flex justify-between">
+                  <button
+                    type="button"
+                    onClick={() => setWizardStep(4)}
+                    className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-xl"
+                  >
+                    ← Kembali
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleFinalizeWizard}
+                    className="px-6 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-xs"
+                  >
+                    Simpan Semua ({wizardSelectedMappings.length} Jadwal)
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

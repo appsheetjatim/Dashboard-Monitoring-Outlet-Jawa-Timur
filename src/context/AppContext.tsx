@@ -74,8 +74,11 @@ interface AppContextType {
   createCallPlan: (item: Omit<CallPlanItem, 'callPlanId'>) => Promise<string>;
   updateCallPlan: (callPlanId: string, updates: Partial<CallPlanItem>) => Promise<boolean>;
   deleteCallPlan: (callPlanId: string) => Promise<boolean>;
-  bulkAssignCallPlan: (outlets: OutletPerformance[], mdsName: string, visitDay: CallPlanItem['visitDay'], weeks: { w1: boolean; w2: boolean; w3: boolean; w4: boolean }, freq: number) => Promise<number>;
-  copyCallPlanFromPrevious: (mdsName: string) => Promise<number>;
+  bulkAssignCallPlan: (
+    items: Array<{ mapping: OutletMapping; week1: boolean; week2: boolean; week3: boolean; week4: boolean }>,
+    mdsName: string,
+    visitDay: CallPlanItem['visitDay']
+  ) => Promise<number>;
   bulkImportCallPlans: (items: Array<Omit<CallPlanItem, 'callPlanId'>>) => Promise<{ successCount: number; errors: string[] }>;
 }
 
@@ -549,29 +552,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return true;
   };
 
+  // Call Plan Wizard finalize step: creates one CallPlanItem per selected
+  // Mapping outlet, each with its OWN Week 1-4 (frequency computed per item).
+  // Uses Mapping data (not raw Performance) so customerSoGroupAreaCode always
+  // matches the real cross-distributor mapping code used elsewhere in the app.
   const bulkAssignCallPlan = async (
-    outlets: OutletPerformance[],
+    items: Array<{ mapping: OutletMapping; week1: boolean; week2: boolean; week3: boolean; week4: boolean }>,
     mdsName: string,
-    visitDay: CallPlanItem['visitDay'],
-    weeks: { w1: boolean; w2: boolean; w3: boolean; w4: boolean },
-    freq: number
+    visitDay: CallPlanItem['visitDay']
   ): Promise<number> => {
-    const newItems: CallPlanItem[] = outlets.map((o, idx) => ({
+    const newItems: CallPlanItem[] = items.map((it, idx) => ({
       callPlanId: `CP-${Date.now() + idx}`,
       namaPic: currentUser?.namaPic || '',
       namaMds: mdsName,
-      customerSoGroupAreaCode: o.kodeCustNfiGroup,
-      customerSoGroupArea: o.namaCustomerBaru,
-      klasifikasiOutlet: o.calculatedRing,
-      kabupaten: o.kabupaten,
-      kecamatan: o.kecamatan,
-      alamat: o.alamat,
+      customerSoGroupAreaCode: it.mapping.customerSoGroupAreaCode,
+      customerSoGroupArea: it.mapping.customerSoGroupArea,
+      klasifikasiOutlet: it.mapping.klasifikasiOutlet,
+      kabupaten: it.mapping.kabupaten,
+      kecamatan: it.mapping.kecamatan,
+      alamat: it.mapping.alamat,
       visitDay,
-      week1: weeks.w1,
-      week2: weeks.w2,
-      week3: weeks.w3,
-      week4: weeks.w4,
-      frequency: freq,
+      week1: it.week1,
+      week2: it.week2,
+      week3: it.week3,
+      week4: it.week4,
+      frequency: [it.week1, it.week2, it.week3, it.week4].filter(Boolean).length,
     }));
 
     const nextPlans = [...newItems, ...callPlans];
@@ -580,8 +585,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await addLogRecord(
       'Create',
       'Call Plan',
-      `BULK-ASSIGN-${Date.now()}`,
-      `Bulk Assign Call Plan: ${newItems.length} outlet ditugaskan ke ${mdsName} pada hari ${visitDay} (Frekuensi ${freq}x)`
+      `WIZARD-${Date.now()}`,
+      `Call Plan Wizard: ${newItems.length} outlet ditugaskan ke ${mdsName} pada hari ${visitDay}`
     );
 
     if (googleToken) {
@@ -592,36 +597,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
     return newItems.length;
-  };
-
-  const copyCallPlanFromPrevious = async (mdsName: string): Promise<number> => {
-    const existingMdsPlans = callPlans.filter((c) => c.namaMds.toLowerCase() === mdsName.toLowerCase());
-    if (existingMdsPlans.length === 0) return 0;
-
-    const duplicated: CallPlanItem[] = existingMdsPlans.map((p, idx) => ({
-      ...p,
-      callPlanId: `CP-${Date.now() + idx}`,
-      namaPic: currentUser?.namaPic || p.namaPic,
-    }));
-
-    const nextPlans = [...duplicated, ...callPlans];
-    setCallPlans(nextPlans);
-
-    await addLogRecord(
-      'Create',
-      'Call Plan',
-      `COPY-MDS-${Date.now()}`,
-      `Salin Call Plan Bulan Lalu: Menduplikasi ${duplicated.length} jadwal kunjungan untuk MDS ${mdsName}`
-    );
-
-    if (googleToken) {
-      try {
-        await saveCallPlansToSheet(nextPlans, googleToken);
-      } catch (e) {
-        console.warn('Sheets copy call plans failed:', e);
-      }
-    }
-    return duplicated.length;
   };
 
   const bulkImportCallPlans = async (items: Array<Omit<CallPlanItem, 'callPlanId'>>) => {
@@ -692,7 +667,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateCallPlan,
         deleteCallPlan,
         bulkAssignCallPlan,
-        copyCallPlanFromPrevious,
         bulkImportCallPlans,
       }}
     >
