@@ -16,7 +16,7 @@ import { LoginModal } from './components/LoginModal';
 import { AlertCircle, RotateCw } from 'lucide-react';
 
 function DashboardContent() {
-  const { currentUser, errorMessage, syncWithGoogleSheets, syncStatus } = useApp();
+  const { currentUser, errorMessage, syncWithGoogleSheets, syncStatus, userPics } = useApp();
   const [activeTab, setActiveTab] = useState<ActiveTab>('performance');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
@@ -29,6 +29,57 @@ function DashboardContent() {
     setActiveTab('map');
   };
 
+  // Gate 1: no live data at all yet (first-ever load, or cache cleared) —
+  // block access entirely until the person clicks Sync Data and it succeeds.
+  // A returning person with cached data from a previous sync skips straight
+  // past this (userPics is already populated).
+  if (userPics.length === 0) {
+    if (syncStatus === 'error') {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
+          <div className="max-w-sm w-full text-center bg-white rounded-3xl border border-slate-200 shadow-xs p-8">
+            <div className="w-14 h-14 bg-rose-100 rounded-2xl flex items-center justify-center text-rose-600 mx-auto mb-4">
+              <AlertCircle className="w-7 h-7" />
+            </div>
+            <h2 className="font-bold text-slate-900 mb-1">Gagal Terhubung ke Database</h2>
+            <p className="text-xs text-slate-500 mb-5">
+              {errorMessage || 'Tidak bisa menyambungkan ke Google Sheets. Periksa koneksi internet Anda dan coba lagi.'}
+            </p>
+            <button
+              onClick={syncWithGoogleSheets}
+              className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-xs rounded-xl shadow-md shadow-indigo-200 transition-all flex items-center justify-center gap-2"
+            >
+              <RotateCw className="w-4 h-4" />
+              Coba Lagi
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
+        <div className="max-w-sm w-full text-center bg-white rounded-3xl border border-slate-200 shadow-xs p-8">
+          <div className="w-14 h-14 bg-indigo-100 rounded-2xl flex items-center justify-center text-indigo-600 mx-auto mb-4">
+            <RotateCw className={`w-7 h-7 ${syncStatus === 'syncing' ? 'animate-spin' : ''}`} />
+          </div>
+          <h2 className="font-bold text-slate-900 mb-1">Monitoring Outlet Distributor</h2>
+          <p className="text-xs text-slate-500 mb-5">
+            Sambungkan ke database Google Sheets untuk mulai memuat data.
+          </p>
+          <button
+            onClick={syncWithGoogleSheets}
+            disabled={syncStatus === 'syncing'}
+            className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-xs rounded-xl shadow-md shadow-indigo-200 transition-all flex items-center justify-center gap-2 disabled:opacity-60"
+          >
+            <RotateCw className={`w-4 h-4 ${syncStatus === 'syncing' ? 'animate-spin' : ''}`} />
+            {syncStatus === 'syncing' ? 'Menyinkronkan...' : 'Sync Data'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Gate 2: live data is available, but no one is logged in yet
   if (!currentUser) {
     return <LoginModal />;
   }

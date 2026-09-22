@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { Lock, UserCheck, ShieldCheck, UserCheck2, LogIn, AlertCircle } from 'lucide-react';
+import { Lock, LogIn, AlertCircle } from 'lucide-react';
 
 export const LoginModal: React.FC = () => {
-  const { currentUser, login, userPics } = useApp();
+  const { currentUser, login } = useApp();
   const [userId, setUserId] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -16,16 +16,6 @@ export const LoginModal: React.FC = () => {
     setError(null);
     setLoading(true);
     const res = await login(userId, password);
-    setLoading(false);
-    if (!res.success) {
-      setError(res.message || 'Login gagal.');
-    }
-  };
-
-  const handleQuickLogin = async (uId: string, pass: string = 'password123') => {
-    setError(null);
-    setLoading(true);
-    const res = await login(uId, pass);
     setLoading(false);
     if (!res.success) {
       setError(res.message || 'Login gagal.');
@@ -90,50 +80,6 @@ export const LoginModal: React.FC = () => {
             {loading ? 'Memvalidasi...' : 'Masuk ke Dashboard'}
           </button>
         </form>
-
-        <div className="mt-6 pt-5 border-t border-slate-100">
-          <p className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-2.5 text-center">
-            Pilih Akun Demo Cepat (Role PIC)
-          </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {userPics.map((u) => {
-              const isMgr = u.role === 'Manager';
-              return (
-                <button
-                  key={u.userId}
-                  type="button"
-                  onClick={() => handleQuickLogin(u.userId, u.password || 'password123')}
-                  className="p-2.5 rounded-xl border border-slate-200 hover:border-indigo-400 hover:bg-indigo-50/50 transition-all text-left flex items-start gap-2.5 group"
-                >
-                  <div
-                    className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold shrink-0 ${
-                      isMgr
-                        ? 'bg-purple-100 text-purple-700 group-hover:bg-purple-200'
-                        : 'bg-emerald-100 text-emerald-700 group-hover:bg-emerald-200'
-                    }`}
-                  >
-                    {isMgr ? <ShieldCheck className="w-4 h-4" /> : <UserCheck className="w-4 h-4" />}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-semibold text-xs text-slate-800 truncate">
-                        {u.namaPic}
-                      </span>
-                      <span
-                        className={`text-[10px] px-1.5 py-0.5 rounded-md font-medium ${
-                          isMgr ? 'bg-purple-50 text-purple-700' : 'bg-emerald-50 text-emerald-700'
-                        }`}
-                      >
-                        {u.role}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-slate-400 truncate">{u.area}</p>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
       </div>
     </div>
   );

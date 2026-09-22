@@ -9,15 +9,6 @@ import {
   CallPlanItem,
   LogActivityRecord,
 } from '../types';
-import {
-  INITIAL_USER_PICS,
-  INITIAL_USER_MDS,
-  INITIAL_DIST_ASSIGNMENTS,
-  INITIAL_PERFORMANCE_RAW,
-  INITIAL_MAPPINGS,
-  INITIAL_CALL_PLANS,
-  INITIAL_LOG_ACTIVITIES,
-} from '../data/seedData';
 import { calculateOutletPerformance } from '../services/outletClassification';
 import {
   signInWithGoogle,
@@ -85,17 +76,62 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | null>(null);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Session State
+  // Core Data States — load from localStorage cache (real data from a
+  // previous sync) or EMPTY. Never fall back to demo/seed data: an empty
+  // array is the honest signal "not connected to the database yet", and the
+  // top-level app gate (App.tsx) uses that signal to block access until a
+  // real sync succeeds.
+  const [userPics, setUserPics] = useState<UserPIC[]>(() => {
+    const saved = localStorage.getItem('pic_users_cache');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  const [userMds, setUserMds] = useState<UserMDS[]>(() => {
+    const saved = localStorage.getItem('mds_users_cache');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  const [distAssignments, setDistAssignments] = useState<DistAssignment[]>(() => {
+    const saved = localStorage.getItem('dist_assignments_cache');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  const [rawPerformance, setRawPerformance] = useState<OutletPerformance[]>(() => {
+    const saved = localStorage.getItem('performance_raw_cache');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  const [mappings, setMappings] = useState<OutletMapping[]>(() => {
+    const saved = localStorage.getItem('mappings_cache');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  const [callPlans, setCallPlans] = useState<CallPlanItem[]>(() => {
+    const saved = localStorage.getItem('call_plans_cache');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  const [logs, setLogs] = useState<LogActivityRecord[]>(() => {
+    const saved = localStorage.getItem('logs_cache');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  // Session State — defaults to null (NOT an auto-logged-in demo account).
+  // A previously saved session is restored only if that userId still exists
+  // in the cached (real) User PIC data; otherwise the session is discarded
+  // and the person has to log in again, e.g. if their account was removed.
   const [currentUser, setCurrentUser] = useState<UserPIC | null>(() => {
     const saved = localStorage.getItem('pic_session');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        return INITIAL_USER_PICS[1]; // Default Budi Santoso (Supervisor)
-      }
+    if (!saved) return null;
+    try {
+      const parsedSession: UserPIC = JSON.parse(saved);
+      const stillExists = userPics.find(
+        (u) => u.userId.toLowerCase() === parsedSession.userId?.toLowerCase()
+      );
+      return stillExists || null;
+    } catch (e) {
+      return null;
     }
-    return INITIAL_USER_PICS[1]; // Default login for instant preview
   });
 
   // Google OAuth state
@@ -109,41 +145,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Core Data States (load from localStorage or seed fallback)
-  const [userPics, setUserPics] = useState<UserPIC[]>(() => {
-    const saved = localStorage.getItem('pic_users_cache');
-    return saved ? JSON.parse(saved) : INITIAL_USER_PICS;
-  });
-
-  const [userMds, setUserMds] = useState<UserMDS[]>(() => {
-    const saved = localStorage.getItem('mds_users_cache');
-    return saved ? JSON.parse(saved) : INITIAL_USER_MDS;
-  });
-
-  const [distAssignments, setDistAssignments] = useState<DistAssignment[]>(() => {
-    const saved = localStorage.getItem('dist_assignments_cache');
-    return saved ? JSON.parse(saved) : INITIAL_DIST_ASSIGNMENTS;
-  });
-
-  const [rawPerformance, setRawPerformance] = useState<OutletPerformance[]>(() => {
-    const saved = localStorage.getItem('performance_raw_cache');
-    return saved ? JSON.parse(saved) : INITIAL_PERFORMANCE_RAW;
-  });
-
-  const [mappings, setMappings] = useState<OutletMapping[]>(() => {
-    const saved = localStorage.getItem('mappings_cache');
-    return saved ? JSON.parse(saved) : INITIAL_MAPPINGS;
-  });
-
-  const [callPlans, setCallPlans] = useState<CallPlanItem[]>(() => {
-    const saved = localStorage.getItem('call_plans_cache');
-    return saved ? JSON.parse(saved) : INITIAL_CALL_PLANS;
-  });
-
-  const [logs, setLogs] = useState<LogActivityRecord[]>(() => {
-    const saved = localStorage.getItem('logs_cache');
-    return saved ? JSON.parse(saved) : INITIAL_LOG_ACTIVITIES;
-  });
 
   // Calculate dynamically derived Performance metrics & Pareto per Depo & Ring
   const performance = useMemo(() => {
