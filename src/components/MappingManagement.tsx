@@ -999,7 +999,7 @@ export const MappingManagement: React.FC = () => {
           });
         }
       } catch (err: any) {
-        setImportResult({ successCount: 0, failed: [{ row: 0, reason: 'Gagal membaca file: ' + err.message }] });
+        setImportResult({ successCount: 0, failed: [{ row: 0, reason: err.message || 'Gagal memproses file.' }] });
       } finally {
         setIsImporting(false);
       }

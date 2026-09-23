@@ -20,6 +20,20 @@ import {
 
 export const SPREADSHEET_ID = '1ktRQP1TUP_IS57CuMOrHdxG5n3QrDBojoPl73xvMw5A';
 
+// Thrown whenever a Google Sheets API call fails with 401 Unauthorized —
+// this specifically means the OAuth access token has expired (Google access
+// tokens always expire after 1 hour, and this app doesn't request a refresh
+// token, so there's no way to silently renew it). Callers catch this
+// distinct error type to show a clear "session expired, reconnect" message
+// instead of a raw/confusing API error, and to reset the stored token so the
+// "Sambungkan Google" button is ready to be clicked again.
+export class GoogleAuthExpiredError extends Error {
+  constructor() {
+    super('Sesi Google Anda sudah berakhir (token otomatis kedaluwarsa setelah ±1 jam). Klik "Sambungkan Google" di header untuk menyambung ulang.');
+    this.name = 'GoogleAuthExpiredError';
+  }
+}
+
 // Initialize Firebase App
 const app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
 export const auth = getAuth(app);
@@ -82,6 +96,7 @@ async function fetchSheetValues(range: string, token: string): Promise<any[][] |
   });
 
   if (!res.ok) {
+    if (res.status === 401) throw new GoogleAuthExpiredError();
     const errorBody = await res.json().catch(() => ({}));
     console.warn(`Sheets API fetch ${range} failed:`, errorBody);
     return null;
@@ -106,6 +121,7 @@ async function appendSheetValues(range: string, values: any[][], token: string):
   });
 
   if (!res.ok) {
+    if (res.status === 401) throw new GoogleAuthExpiredError();
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error?.message || 'Gagal menyimpan data ke Google Sheets.');
   }
@@ -127,6 +143,7 @@ async function updateSheetValues(range: string, values: any[][], token: string):
   });
 
   if (!res.ok) {
+    if (res.status === 401) throw new GoogleAuthExpiredError();
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error?.message || 'Gagal mengupdate data di Google Sheets.');
   }
@@ -154,6 +171,7 @@ async function overwriteSheetValues(
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!clearRes.ok) {
+    if (clearRes.status === 401) throw new GoogleAuthExpiredError();
     const err = await clearRes.json().catch(() => ({}));
     throw new Error(
       err.error?.message || `Gagal membersihkan sheet "${sheetName}" sebelum menyimpan perubahan.`
@@ -267,8 +285,8 @@ export async function fetchAllGoogleSheetsData(token: string) {
   };
 }
 
-function parsePerformanceRows(rows: any[][] | null): OutletPerformance[] {
-  if (!rows || rows.length === 0) return [];
+function parsePerformanceRows(rows: any[][] | null): OutletPerformance[] | null {
+  if (!rows) return null; // fetch genuinely failed — do not overwrite existing data with this
   return rows.map((r) => {
     const lat = r[34] ? parseNum(r[34]) : undefined;
     const lng = r[35] ? parseNum(r[35]) : undefined;
@@ -318,8 +336,8 @@ function parsePerformanceRows(rows: any[][] | null): OutletPerformance[] {
   });
 }
 
-function parseUserPicRows(rows: any[][] | null): UserPIC[] {
-  if (!rows || rows.length === 0) return [];
+function parseUserPicRows(rows: any[][] | null): UserPIC[] | null {
+  if (!rows) return null; // fetch genuinely failed — do not overwrite existing data with this
   return rows.map((r) => ({
     userId: r[0] || '',
     namaPic: r[1] || '',
@@ -331,8 +349,8 @@ function parseUserPicRows(rows: any[][] | null): UserPIC[] {
   }));
 }
 
-function parseUserMdsRows(rows: any[][] | null): UserMDS[] {
-  if (!rows || rows.length === 0) return [];
+function parseUserMdsRows(rows: any[][] | null): UserMDS[] | null {
+  if (!rows) return null; // fetch genuinely failed — do not overwrite existing data with this
   return rows.map((r) => ({
     nik: r[0] || '',
     namaMds: r[1] || '',
@@ -342,8 +360,8 @@ function parseUserMdsRows(rows: any[][] | null): UserMDS[] {
   }));
 }
 
-function parseDistRows(rows: any[][] | null): DistAssignment[] {
-  if (!rows || rows.length === 0) return [];
+function parseDistRows(rows: any[][] | null): DistAssignment[] | null {
+  if (!rows) return null; // fetch genuinely failed — do not overwrite existing data with this
   return rows.map((r) => ({
     dist: r[0] || '',
     subDist: r[1] || '',
@@ -352,8 +370,8 @@ function parseDistRows(rows: any[][] | null): DistAssignment[] {
   }));
 }
 
-function parseMappingRows(rows: any[][] | null): OutletMapping[] {
-  if (!rows || rows.length === 0) return [];
+function parseMappingRows(rows: any[][] | null): OutletMapping[] | null {
+  if (!rows) return null; // fetch genuinely failed — do not overwrite existing data with this
   return rows.map((r) => ({
     mappingId: r[0] || `MAP-${Date.now()}`,
     customerSoGroupAreaCode: r[1] || '',
@@ -395,8 +413,8 @@ function parseMappingRows(rows: any[][] | null): OutletMapping[] {
   }));
 }
 
-function parseCallPlanRows(rows: any[][] | null): CallPlanItem[] {
-  if (!rows || rows.length === 0) return [];
+function parseCallPlanRows(rows: any[][] | null): CallPlanItem[] | null {
+  if (!rows) return null; // fetch genuinely failed — do not overwrite existing data with this
   return rows.map((r) => ({
     callPlanId: r[0] || `CP-${Date.now()}`,
     namaPic: r[1] || '',
@@ -416,8 +434,8 @@ function parseCallPlanRows(rows: any[][] | null): CallPlanItem[] {
   }));
 }
 
-function parseLogRows(rows: any[][] | null): LogActivityRecord[] {
-  if (!rows || rows.length === 0) return [];
+function parseLogRows(rows: any[][] | null): LogActivityRecord[] | null {
+  if (!rows) return null; // fetch genuinely failed — do not overwrite existing data with this
   return rows.map((r) => ({
     timestamp: r[0] || new Date().toISOString(),
     namaPic: r[1] || '',
@@ -548,6 +566,7 @@ async function findMappingRowNumber(mappingId: string, token: string): Promise<n
   )}`;
   const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
   if (!res.ok) {
+    if (res.status === 401) throw new GoogleAuthExpiredError();
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error?.message || 'Gagal membaca data Mapping dari Google Sheets.');
   }
@@ -577,26 +596,26 @@ export async function updateMappingInSheet(mapping: OutletMapping, token: string
 }
 
 // Write operation: Save Call Plans to Sheet
-export async function saveCallPlansToSheet(callPlans: CallPlanItem[], token: string) {
-  const headers = [
-    'Call Plan ID',
-    'Nama PIC',
-    'Nama MDS',
-    'Customer SO Group Area Code',
-    'Customer SO Group Area',
-    'Klasifikasi Outlet',
-    'Kabupaten',
-    'Kecamatan',
-    'Alamat',
-    'Visit Day',
-    'Week 1',
-    'Week 2',
-    'Week 3',
-    'Week 4',
-    'Frequency',
-  ];
+const CALL_PLAN_HEADERS = [
+  'Call Plan ID',
+  'Nama PIC',
+  'Nama MDS',
+  'Customer SO Group Area Code',
+  'Customer SO Group Area',
+  'Klasifikasi Outlet',
+  'Kabupaten',
+  'Kecamatan',
+  'Alamat',
+  'Visit Day',
+  'Week 1',
+  'Week 2',
+  'Week 3',
+  'Week 4',
+  'Frequency',
+];
 
-  const rows = callPlans.map((c) => [
+function callPlanToRow(c: CallPlanItem): any[] {
+  return [
     c.callPlanId,
     c.namaPic,
     c.namaMds,
@@ -612,9 +631,59 @@ export async function saveCallPlansToSheet(callPlans: CallPlanItem[], token: str
     c.week3 ? 'TRUE' : 'FALSE',
     c.week4 ? 'TRUE' : 'FALSE',
     c.frequency,
-  ]);
+  ];
+}
 
-  return overwriteSheetValues('Call Plan', headers, rows, token);
+// Full rewrite — still used for Bulk Upload and the Call Plan Wizard's
+// finalize step (both genuinely write many rows at once, so a full rewrite
+// is reasonable there). Single create/update now go through the
+// row-targeted functions below instead, so editing/adding one schedule
+// entry can't collide with someone else's concurrent edit to a different one.
+export async function saveCallPlansToSheet(callPlans: CallPlanItem[], token: string) {
+  const rows = callPlans.map(callPlanToRow);
+  return overwriteSheetValues('Call Plan', CALL_PLAN_HEADERS, rows, token);
+}
+
+// Create: append ONE new row at the end of the sheet — never touches any
+// existing row, so it can't collide with anyone else's concurrent edit.
+export async function appendCallPlanToSheet(callPlan: CallPlanItem, token: string): Promise<boolean> {
+  const row = callPlanToRow(callPlan);
+  return appendSheetValues('Call Plan!A:A', [row], token);
+}
+
+// Finds which sheet row (1-indexed, header included) a given Call Plan ID is
+// currently on, by reading only column A (cheap) rather than the whole sheet.
+async function findCallPlanRowNumber(callPlanId: string, token: string): Promise<number | null> {
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(
+    'Call Plan!A:A'
+  )}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) {
+    if (res.status === 401) throw new GoogleAuthExpiredError();
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || 'Gagal membaca data Call Plan dari Google Sheets.');
+  }
+  const data = await res.json();
+  const colA: string[][] = data.values || [];
+  for (let i = 1; i < colA.length; i++) {
+    if (colA[i]?.[0] === callPlanId) {
+      return i + 1; // sheet rows are 1-indexed; colA[0] is the header row
+    }
+  }
+  return null;
+}
+
+// Edit: update ONLY the one row matching this Call Plan ID, in place — every
+// other row in the sheet is left completely untouched.
+export async function updateCallPlanInSheet(callPlan: CallPlanItem, token: string): Promise<boolean> {
+  const rowNumber = await findCallPlanRowNumber(callPlan.callPlanId, token);
+  if (rowNumber === null) {
+    throw new Error(
+      `Call Plan ID "${callPlan.callPlanId}" tidak ditemukan di sheet saat ini — mungkin baris ini baru saja dihapus/diubah oleh orang lain. Coba sync ulang dan periksa kembali.`
+    );
+  }
+  const row = callPlanToRow(callPlan);
+  return updateSheetValues(`Call Plan!A${rowNumber}`, [row], token);
 }
 
 // Write operation: Update User PIC Password

@@ -7,7 +7,6 @@ import {
   Calendar,
   CalendarCheck,
   Plus,
-  Trash2,
   Edit2,
   Download,
   Upload,
@@ -34,7 +33,6 @@ export const CallPlanManagement: React.FC = () => {
     performance,
     mappings,
     updateCallPlan,
-    deleteCallPlan,
     bulkAssignCallPlan,
     bulkImportCallPlans,
     accessibleMds,
@@ -157,6 +155,72 @@ export const CallPlanManagement: React.FC = () => {
     return map;
   }, [filteredCallPlans]);
 
+  // Today's day name (Indonesian), used to highlight the matching day-group
+  const todayName = useMemo(() => {
+    const idx = new Date().getDay(); // 0=Sun..6=Sat
+    const map: Record<number, string> = { 1: 'Senin', 2: 'Selasa', 3: 'Rabu', 4: 'Kamis', 5: 'Jumat', 6: 'Sabtu' };
+    return map[idx] || '';
+  }, []);
+
+  // Deterministic small color per MDS name, so the same MDS always shows the
+  // same dot color within a day group (helps the eye "stick" to one MDS's
+  // rows even when scanning quickly through a mixed day).
+  const MDS_DOT_COLORS = ['bg-indigo-500', 'bg-emerald-500', 'bg-amber-500', 'bg-rose-500', 'bg-sky-500', 'bg-purple-500'];
+  const getMdsColor = (name: string) => {
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) % MDS_DOT_COLORS.length;
+    return MDS_DOT_COLORS[Math.abs(hash) % MDS_DOT_COLORS.length];
+  };
+
+  // Compact visual for Week 1-4 + frequency, replacing 5 separate columns
+  const WeekPattern: React.FC<{ plan: CallPlanItem }> = ({ plan }) => (
+    <div className="flex items-center gap-1.5">
+      <div className="flex gap-0.5">
+        {[plan.week1, plan.week2, plan.week3, plan.week4].map((on, i) => (
+          <span
+            key={i}
+            title={`Minggu ${i + 1}${on ? ' — dikunjungi' : ''}`}
+            className={`w-2 h-2 rounded-full ${on ? 'bg-indigo-500' : 'bg-slate-200'}`}
+          />
+        ))}
+      </div>
+      <span className="text-[10px] text-slate-400 whitespace-nowrap">{plan.frequency}x/bln</span>
+    </div>
+  );
+
+  // Table view: each day as its own group (header row + its outlets), and
+  // within a day, sorted by MDS so consecutive same-MDS rows can skip
+  // repeating the MDS name/day — a flat list previously repeated both on
+  // every single row, which was noisy to scan.
+  const tableGroupedByDay = useMemo(() => {
+    return daysOfWeek
+      .map((day) => ({
+        day,
+        plans: [...(plansByDay[day] || [])].sort((a, b) => a.namaMds.localeCompare(b.namaMds)),
+      }))
+      .filter((g) => g.plans.length > 0);
+  }, [plansByDay]);
+
+  // Grid view: same per-day data, but further sub-grouped by MDS (as
+  // [mdsName, items][] pairs) — computed once here for all days, rather than
+  // calling useMemo inside the render .map() below (which would break the
+  // Rules of Hooks).
+  const mdsGroupsByDay = useMemo(() => {
+    const result: Record<string, [string, CallPlanItem[]][]> = {};
+    daysOfWeek.forEach((day) => {
+      const list = plansByDay[day] || [];
+      const map = new Map<string, CallPlanItem[]>();
+      [...list]
+        .sort((a, b) => a.namaMds.localeCompare(b.namaMds))
+        .forEach((item) => {
+          if (!map.has(item.namaMds)) map.set(item.namaMds, []);
+          map.get(item.namaMds)!.push(item);
+        });
+      result[day] = Array.from(map.entries());
+    });
+    return result;
+  }, [plansByDay]);
+
   // Handlers for Single Add / Edit
   const handleOpenEdit = (plan: CallPlanItem) => {
     setEditingId(plan.callPlanId);
@@ -206,15 +270,13 @@ export const CallPlanManagement: React.FC = () => {
       frequency: modalFreq,
     };
 
-    await updateCallPlan(editingId, payload);
-    setToast({ message: `Jadwal ${modalOutletName} berhasil diperbarui.`, type: 'success' });
-    setIsModalOpen(false);
-  };
-
-  const handleDelete = async (plan: CallPlanItem) => {
-    if (window.confirm(`Hapus jadwal kunjungan ke ${plan.customerSoGroupArea} untuk MDS ${plan.namaMds}?`)) {
-      await deleteCallPlan(plan.callPlanId);
-      setToast({ message: `Jadwal kunjungan ke ${plan.customerSoGroupArea} berhasil dihapus.`, type: 'success' });
+    try {
+      await updateCallPlan(editingId, payload);
+      setToast({ message: `Jadwal ${modalOutletName} berhasil diperbarui.`, type: 'success' });
+      setIsModalOpen(false);
+    } catch (err: any) {
+      setModalError(err.message || 'Gagal menyimpan jadwal.');
+      setToast({ message: err.message || 'Gagal menyimpan jadwal.', type: 'error' });
     }
   };
 
@@ -347,11 +409,14 @@ export const CallPlanManagement: React.FC = () => {
   const getCombinedMetrics = (mapping: OutletMapping) => {
     const bsp = mapping.bspCode1 ? performanceByCode.get(mapping.bspCode1) : undefined;
     const udn = mapping.udnCode1 ? performanceByCode.get(mapping.udnCode1) : undefined;
+    const sku = (bsp?.sku2026 || 0) + (udn?.sku2026 || 0);
+    const avgPa = (bsp?.avgPa2026 || 0) + (udn?.avgPa2026 || 0);
     return {
       omset: (bsp?.omset2026 || 0) + (udn?.omset2026 || 0),
       avgSales: (bsp?.avgSales2026 || 0) + (udn?.avgSales2026 || 0),
-      sku: (bsp?.sku2026 || 0) + (udn?.sku2026 || 0),
-      avgPa: (bsp?.avgPa2026 || 0) + (udn?.avgPa2026 || 0),
+      sku,
+      avgPa,
+      percentPa: sku > 0 ? (avgPa / sku) * 100 : 0,
     };
   };
 
@@ -374,12 +439,16 @@ export const CallPlanManagement: React.FC = () => {
       const w = wizardWeeks[m.customerSoGroupAreaCode] || { w1: false, w2: false, w3: false, w4: false };
       return { mapping: m, week1: w.w1, week2: w.w2, week3: w.w3, week4: w.w4 };
     });
-    const count = await bulkAssignCallPlan(items, wizardMds, wizardDay);
-    setIsWizardOpen(false);
-    setToast({
-      message: `Sukses! ${count} jadwal kunjungan dibuat untuk MDS ${wizardMds} (Hari ${wizardDay}).`,
-      type: 'success',
-    });
+    try {
+      const count = await bulkAssignCallPlan(items, wizardMds, wizardDay);
+      setIsWizardOpen(false);
+      setToast({
+        message: `Sukses! ${count} jadwal kunjungan dibuat untuk MDS ${wizardMds} (Hari ${wizardDay}).`,
+        type: 'success',
+      });
+    } catch (err: any) {
+      setToast({ message: err.message || 'Gagal menyimpan jadwal Call Plan.', type: 'error' });
+    }
   };
 
   // Export Call Plan
@@ -540,7 +609,7 @@ export const CallPlanManagement: React.FC = () => {
           });
         }
       } catch (err: any) {
-        setImportResult({ successCount: 0, failed: [{ row: 0, reason: 'Gagal membaca file: ' + err.message }] });
+        setImportResult({ successCount: 0, failed: [{ row: 0, reason: err.message || 'Gagal memproses file.' }] });
       } finally {
         setIsImporting(false);
       }
@@ -824,108 +893,95 @@ export const CallPlanManagement: React.FC = () => {
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200 text-slate-700 font-semibold">
                   <th className="py-3 px-3">Petugas MDS</th>
-                  <th className="py-3 px-3">Hari Kunjungan</th>
                   <th className="py-3 px-3">Kode &amp; Nama Outlet</th>
                   <th className="py-3 px-3 text-center">Ring</th>
-                  <th className="py-3 px-3">Alamat / Wilayah</th>
-                  <th className="py-3 px-3 text-center">W1</th>
-                  <th className="py-3 px-3 text-center">W2</th>
-                  <th className="py-3 px-3 text-center">W3</th>
-                  <th className="py-3 px-3 text-center">W4</th>
-                  <th className="py-3 px-3 text-center">Frekuensi</th>
+                  <th className="py-3 px-3">Kecamatan / Kabupaten</th>
+                  <th className="py-3 px-3">Pola Kunjungan</th>
                   <th className="py-3 px-3 text-center">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredCallPlans.length === 0 ? (
+                {tableGroupedByDay.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="text-center py-8 text-slate-400">
+                    <td colSpan={6} className="text-center py-8 text-slate-400">
                       Tidak ada call plan yang cocok dengan filter.
                     </td>
                   </tr>
                 ) : (
-                  filteredCallPlans.map((plan) => (
-                    <tr key={plan.callPlanId} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="py-3 px-3 font-bold text-slate-900">
-                        {plan.namaMds}
-                      </td>
-                      <td className="py-3 px-3">
-                        <span className="font-semibold text-indigo-700 px-2.5 py-1 bg-indigo-50 rounded-lg">
-                          {plan.visitDay}
-                        </span>
-                      </td>
-                      <td className="py-3 px-3">
-                        <div className="font-bold text-slate-900">{plan.customerSoGroupArea}</div>
-                        <div className="text-[11px] font-mono text-slate-400">
-                          {plan.customerSoGroupAreaCode}
-                        </div>
-                      </td>
-                      <td className="py-3 px-3 text-center">
-                        <span className="font-bold text-[11px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-800">
-                          {plan.klasifikasiOutlet}
-                        </span>
-                      </td>
-                      <td className="py-3 px-3 text-slate-600 max-w-xs truncate">
-                        {plan.alamat || `${plan.kecamatan}, ${plan.kabupaten}`}
-                      </td>
-                      <td className="py-3 px-3 text-center">
-                        {plan.week1 ? (
-                          <span className="w-5 h-5 rounded-md bg-emerald-100 text-emerald-800 font-bold inline-flex items-center justify-center text-[11px]">
-                            ✓
-                          </span>
-                        ) : (
-                          <span className="text-slate-300">-</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-3 text-center">
-                        {plan.week2 ? (
-                          <span className="w-5 h-5 rounded-md bg-emerald-100 text-emerald-800 font-bold inline-flex items-center justify-center text-[11px]">
-                            ✓
-                          </span>
-                        ) : (
-                          <span className="text-slate-300">-</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-3 text-center">
-                        {plan.week3 ? (
-                          <span className="w-5 h-5 rounded-md bg-emerald-100 text-emerald-800 font-bold inline-flex items-center justify-center text-[11px]">
-                            ✓
-                          </span>
-                        ) : (
-                          <span className="text-slate-300">-</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-3 text-center">
-                        {plan.week4 ? (
-                          <span className="w-5 h-5 rounded-md bg-emerald-100 text-emerald-800 font-bold inline-flex items-center justify-center text-[11px]">
-                            ✓
-                          </span>
-                        ) : (
-                          <span className="text-slate-300">-</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-3 text-center font-bold text-slate-800">
-                        {plan.frequency}x/bln
-                      </td>
-                      <td className="py-3 px-3 text-center whitespace-nowrap">
-                        <div className="flex items-center justify-center gap-1">
-                          <button
-                            onClick={() => handleOpenEdit(plan)}
-                            className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50"
-                            title="Edit Jadwal"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleDelete(plan)}
-                            className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50"
-                            title="Hapus Jadwal"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
+                  tableGroupedByDay.map((group) => (
+                    <React.Fragment key={group.day}>
+                      <tr className={group.day === todayName ? 'bg-indigo-50/70' : 'bg-slate-50/70'}>
+                        <td colSpan={6} className="py-2 px-3">
+                          <div className="flex items-center gap-2">
+                            <Calendar
+                              className={`w-3.5 h-3.5 ${
+                                group.day === todayName ? 'text-indigo-600' : 'text-slate-400'
+                              }`}
+                            />
+                            <span
+                              className={`text-xs font-bold ${
+                                group.day === todayName ? 'text-indigo-700' : 'text-slate-700'
+                              }`}
+                            >
+                              {group.day}
+                            </span>
+                            {group.day === todayName && (
+                              <span className="text-[10px] font-bold px-1.5 py-0.2 bg-indigo-600 text-white rounded">
+                                HARI INI
+                              </span>
+                            )}
+                            <span className="text-[11px] text-slate-400">
+                              ({group.plans.length} kunjungan)
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                      {group.plans.map((plan, idx) => {
+                        const showMds = idx === 0 || group.plans[idx - 1].namaMds !== plan.namaMds;
+                        return (
+                          <tr key={plan.callPlanId} className="hover:bg-slate-50/80 transition-colors">
+                            <td className="py-2.5 px-3">
+                              {showMds ? (
+                                <div className="flex items-center gap-1.5">
+                                  <span className={`w-2 h-2 rounded-full shrink-0 ${getMdsColor(plan.namaMds)}`} />
+                                  <span className="font-bold text-slate-900">{plan.namaMds}</span>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-1.5 pl-3.5 text-slate-300">
+                                  <span className="text-[10px]">↳</span>
+                                </div>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <div className="font-bold text-slate-900">{plan.customerSoGroupArea}</div>
+                              <div className="text-[11px] font-mono text-slate-400">
+                                {plan.customerSoGroupAreaCode}
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-3 text-center">
+                              <span className="font-bold text-[11px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-800">
+                                {plan.klasifikasiOutlet}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 text-slate-600" title={plan.alamat}>
+                              {plan.kecamatan}, {plan.kabupaten}
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <WeekPattern plan={plan} />
+                            </td>
+                            <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                              <button
+                                onClick={() => handleOpenEdit(plan)}
+                                className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50"
+                                title="Edit Jadwal"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </React.Fragment>
                   ))
                 )}
               </tbody>
@@ -937,60 +993,90 @@ export const CallPlanManagement: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {daysOfWeek.map((day) => {
             const list = plansByDay[day] || [];
+            const isToday = day === todayName;
+            const mdsGroups = mdsGroupsByDay[day] || [];
+            const hasMultipleMds = mdsGroups.length > 1;
+
             return (
               <div
                 key={day}
-                className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden flex flex-col"
+                className={`bg-white rounded-2xl border shadow-xs overflow-hidden flex flex-col ${
+                  isToday ? 'border-indigo-300 ring-2 ring-indigo-100' : 'border-slate-200'
+                }`}
               >
-                <div className="p-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                <div
+                  className={`p-3.5 border-b flex items-center justify-between ${
+                    isToday ? 'bg-indigo-50 border-indigo-100' : 'bg-slate-50 border-slate-200'
+                  }`}
+                >
                   <div className="flex items-center gap-2">
-                    <Calendar className="w-4 h-4 text-indigo-600" />
-                    <h4 className="font-bold text-sm text-slate-900">Hari {day}</h4>
+                    <Calendar className={`w-4 h-4 ${isToday ? 'text-indigo-600' : 'text-slate-400'}`} />
+                    <h4 className={`font-bold text-sm ${isToday ? 'text-indigo-700' : 'text-slate-900'}`}>
+                      Hari {day}
+                    </h4>
+                    {isToday && (
+                      <span className="text-[10px] font-bold px-1.5 py-0.2 bg-indigo-600 text-white rounded">
+                        HARI INI
+                      </span>
+                    )}
                   </div>
                   <span className="text-xs font-semibold px-2 py-0.5 bg-indigo-100 text-indigo-800 rounded-md">
                     {list.length} Kunjungan
                   </span>
                 </div>
 
-                <div className="p-3 divide-y divide-slate-100 flex-1 overflow-y-auto max-h-96 space-y-2">
+                <div className="p-3 flex-1 overflow-y-auto max-h-96 space-y-3">
                   {list.length === 0 ? (
                     <p className="text-xs text-slate-400 text-center py-6">
                       Tidak ada jadwal di hari ini.
                     </p>
                   ) : (
-                    list.map((item) => (
-                      <div
-                        key={item.callPlanId}
-                        className="pt-2 first:pt-0 pb-1 flex items-start justify-between gap-2"
-                      >
-                        <div className="min-w-0">
-                          <p className="font-bold text-xs text-slate-900 truncate">
-                            {item.customerSoGroupArea}
-                          </p>
-                          <p className="text-[11px] text-slate-500 truncate">{item.alamat}</p>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.2 rounded">
-                              MDS: {item.namaMds}
-                            </span>
-                            <span className="text-[10px] text-slate-400">
-                              Freq: {item.frequency}x
+                    mdsGroups.map(([mdsName, items]) => (
+                      <div key={mdsName}>
+                        {hasMultipleMds && (
+                          <div className="flex items-center gap-1.5 mb-1.5">
+                            <span className={`w-2 h-2 rounded-full shrink-0 ${getMdsColor(mdsName)}`} />
+                            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">
+                              {mdsName} ({items.length})
                             </span>
                           </div>
-                        </div>
+                        )}
+                        <div className="divide-y divide-slate-100 space-y-1.5">
+                          {items.map((item) => (
+                            <div
+                              key={item.callPlanId}
+                              className="pt-1.5 first:pt-0 pb-1 flex items-start justify-between gap-2"
+                            >
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <p className="font-bold text-xs text-slate-900 truncate">
+                                    {item.customerSoGroupArea}
+                                  </p>
+                                  <span className="shrink-0 text-[10px] font-bold px-1.5 py-0.2 rounded bg-slate-100 text-slate-700">
+                                    {item.klasifikasiOutlet}
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-slate-500 truncate" title={item.alamat}>
+                                  {item.kecamatan}, {item.kabupaten}
+                                </p>
+                                <div className="mt-1">
+                                  <WeekPattern plan={item} />
+                                </div>
+                                {!hasMultipleMds && (
+                                  <p className="text-[10px] text-slate-400 mt-0.5">MDS: {item.namaMds}</p>
+                                )}
+                              </div>
 
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button
-                            onClick={() => handleOpenEdit(item)}
-                            className="p-1 rounded text-slate-400 hover:text-indigo-600"
-                          >
-                            <Edit2 className="w-3 h-3" />
-                          </button>
-                          <button
-                            onClick={() => handleDelete(item)}
-                            className="p-1 rounded text-slate-400 hover:text-rose-600"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                  onClick={() => handleOpenEdit(item)}
+                                  className="p-1 rounded text-slate-400 hover:text-indigo-600"
+                                >
+                                  <Edit2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     ))
@@ -1423,7 +1509,7 @@ export const CallPlanManagement: React.FC = () => {
                               <p className="text-[10px] text-slate-500 mt-0.5">
                                 Omset: Rp {metrics.omset.toLocaleString('id-ID')} • Avg Sales: Rp{' '}
                                 {metrics.avgSales.toLocaleString('id-ID')} • SKU: {metrics.sku.toFixed(1)} • PA:{' '}
-                                {metrics.avgPa.toFixed(1)}
+                                {metrics.avgPa.toFixed(1)} ({metrics.percentPa.toFixed(0)}%)
                               </p>
                             </div>
                           </div>

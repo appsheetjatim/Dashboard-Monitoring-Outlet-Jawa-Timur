@@ -19,6 +19,9 @@ import {
   appendMappingToSheet,
   updateMappingInSheet,
   saveCallPlansToSheet,
+  appendCallPlanToSheet,
+  updateCallPlanInSheet,
+  GoogleAuthExpiredError,
   updateUserPicPasswordInSheet,
   appendLogActivityToSheet,
 } from '../services/googleSheets';
@@ -63,9 +66,7 @@ interface AppContextType {
   bulkImportMappings: (items: Array<Omit<OutletMapping, 'mappingId' | 'mappingDate' | 'lastUpdated'>>) => Promise<{ successCount: number; errors: string[] }>;
 
   // Call Plan mutations
-  createCallPlan: (item: Omit<CallPlanItem, 'callPlanId'>) => Promise<string>;
   updateCallPlan: (callPlanId: string, updates: Partial<CallPlanItem>) => Promise<boolean>;
-  deleteCallPlan: (callPlanId: string) => Promise<boolean>;
   bulkAssignCallPlan: (
     items: Array<{ mapping: OutletMapping; week1: boolean; week2: boolean; week3: boolean; week4: boolean }>,
     mdsName: string,
@@ -275,41 +276,60 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setGoogleToken(null);
   };
 
+  // Centralized handling for any Sheets save/fetch failure. When the token
+  // has specifically expired, this resets the stored Google session (so the
+  // "Sambungkan Google" button in the header is immediately ready to click
+  // again) and passes the clear session-expired message straight through —
+  // otherwise it wraps the error with context about what the person was
+  // trying to do, since the raw Google API message alone isn't very useful.
+  const handleSheetsError = (e: any, fallbackAction: string): never => {
+    if (e instanceof GoogleAuthExpiredError) {
+      setGoogleToken(null);
+      setGoogleUser(null);
+      throw e;
+    }
+    throw new Error(
+      `${fallbackAction}, tapi GAGAL disimpan ke Google Sheets (${e.message || 'error tidak diketahui'}). Coba sync ulang untuk memastikan.`
+    );
+  };
+
   const syncWithGoogleSheetsInternal = async (token: string) => {
     setSyncStatus('syncing');
     setErrorMessage(null);
     try {
       const sheetsData = await fetchAllGoogleSheetsData(token);
-      if (sheetsData.performance && sheetsData.performance.length > 0) {
+      // Trust and apply whatever came back successfully — including a
+      // genuinely empty array, which means the person deleted everything in
+      // that sheet on purpose and the app should reflect that. Only `null`
+      // (a real fetch failure for that specific tab) is skipped, so we don't
+      // wipe good cached data just because one tab's request hiccuped.
+      if (sheetsData.performance !== null) {
         setRawPerformance(sheetsData.performance);
       }
-      if (sheetsData.userPics && sheetsData.userPics.length > 0) {
+      if (sheetsData.userPics !== null) {
         setUserPics(sheetsData.userPics);
       }
-      if (sheetsData.userMds && sheetsData.userMds.length > 0) {
+      if (sheetsData.userMds !== null) {
         setUserMds(sheetsData.userMds);
       }
-      if (sheetsData.distAssignments && sheetsData.distAssignments.length > 0) {
+      if (sheetsData.distAssignments !== null) {
         setDistAssignments(sheetsData.distAssignments);
       }
-      if (sheetsData.mappings && sheetsData.mappings.length > 0) {
+      if (sheetsData.mappings !== null) {
         setMappings(sheetsData.mappings);
       }
-      if (sheetsData.callPlans && sheetsData.callPlans.length > 0) {
+      if (sheetsData.callPlans !== null) {
         setCallPlans(sheetsData.callPlans);
       }
-      if (sheetsData.logs && sheetsData.logs.length > 0) {
+      if (sheetsData.logs !== null) {
         setLogs(sheetsData.logs);
       }
 
       // Mark a genuine full sync only when the CORE datasets actually came
-      // back with data — this is what gates the whole app shell (see
+      // back (not null) — this is what gates the whole app shell (see
       // hasEverSynced below), so it must not be set from a partial/failed
       // sync where e.g. only userPics loaded but performance didn't.
-      if (
-        sheetsData.performance && sheetsData.performance.length > 0 &&
-        sheetsData.userPics && sheetsData.userPics.length > 0
-      ) {
+      if (sheetsData.performance !== null && sheetsData.userPics !== null) {
         setHasEverSynced(true);
         localStorage.setItem('has_synced_once', 'true');
       }
@@ -320,6 +340,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.error('Sync error:', err);
       setSyncStatus('error');
       setErrorMessage(err.message || 'Gagal menyinkronkan data dengan Google Sheets.');
+      if (err instanceof GoogleAuthExpiredError) {
+        setGoogleToken(null);
+        setGoogleUser(null);
+      }
     }
   };
 
@@ -409,9 +433,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         await appendMappingToSheet(newMapping, googleToken);
       } catch (e: any) {
         console.warn('Sheets append failed:', e);
-        throw new Error(
-          `Mapping ditambahkan di tampilan, tapi GAGAL disimpan ke Google Sheets (${e.message || 'error tidak diketahui'}). Coba sync ulang untuk memastikan.`
-        );
+        handleSheetsError(e, 'Mapping ditambahkan di tampilan');
       }
     }
     return mappingId;
@@ -447,9 +469,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         await updateMappingInSheet(updated, googleToken);
       } catch (e: any) {
         console.warn('Sheets update failed:', e);
-        throw new Error(
-          `Mapping diperbarui di tampilan, tapi GAGAL disimpan ke Google Sheets (${e.message || 'error tidak diketahui'}). Coba sync ulang untuk memastikan.`
-        );
+        handleSheetsError(e, 'Mapping diperbarui di tampilan');
       }
     }
     return true;
@@ -479,36 +499,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (googleToken) {
       try {
         await saveMappingsToSheet(nextMappings, googleToken);
-      } catch (e) {
+      } catch (e: any) {
         console.warn('Sheets bulk save failed:', e);
+        handleSheetsError(e, `${newItems.length} mapping ditambahkan di tampilan`);
       }
     }
     return { successCount: newItems.length, errors: [] };
   };
 
   // Call Plan mutations
-  const createCallPlan = async (item: Omit<CallPlanItem, 'callPlanId'>): Promise<string> => {
-    const callPlanId = `CP-${Date.now()}`;
-    const newPlan: CallPlanItem = {
-      ...item,
-      callPlanId,
-    };
-    const nextPlans = [newPlan, ...callPlans];
-    setCallPlans(nextPlans);
-
-    const detail = `Record baru: MDS = ${item.namaMds}, Outlet = ${item.customerSoGroupArea}, Hari = ${item.visitDay}, Freq = ${item.frequency}x`;
-    await addLogRecord('Create', 'Call Plan', callPlanId, detail);
-
-    if (googleToken) {
-      try {
-        await saveCallPlansToSheet(nextPlans, googleToken);
-      } catch (e) {
-        console.warn('Sheets call plan save failed:', e);
-      }
-    }
-    return callPlanId;
-  };
-
   const updateCallPlan = async (callPlanId: string, updates: Partial<CallPlanItem>): Promise<boolean> => {
     const existing = callPlans.find((c) => c.callPlanId === callPlanId);
     if (!existing) return false;
@@ -530,29 +529,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (googleToken) {
       try {
-        await saveCallPlansToSheet(nextPlans, googleToken);
-      } catch (e) {
+        await updateCallPlanInSheet(updated, googleToken);
+      } catch (e: any) {
         console.warn('Sheets call plan update failed:', e);
-      }
-    }
-    return true;
-  };
-
-  const deleteCallPlan = async (callPlanId: string): Promise<boolean> => {
-    const existing = callPlans.find((c) => c.callPlanId === callPlanId);
-    if (!existing) return false;
-
-    const nextPlans = callPlans.filter((c) => c.callPlanId !== callPlanId);
-    setCallPlans(nextPlans);
-
-    const detail = `Record dihapus: MDS = ${existing.namaMds}, Outlet = ${existing.customerSoGroupArea} (${existing.customerSoGroupAreaCode})`;
-    await addLogRecord('Delete', 'Call Plan', callPlanId, detail);
-
-    if (googleToken) {
-      try {
-        await saveCallPlansToSheet(nextPlans, googleToken);
-      } catch (e) {
-        console.warn('Sheets call plan delete failed:', e);
+        handleSheetsError(e, 'Jadwal diperbarui di tampilan');
       }
     }
     return true;
@@ -598,8 +578,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (googleToken) {
       try {
         await saveCallPlansToSheet(nextPlans, googleToken);
-      } catch (e) {
+      } catch (e: any) {
         console.warn('Sheets call plan bulk save failed:', e);
+        handleSheetsError(e, `${newItems.length} jadwal ditambahkan di tampilan`);
       }
     }
     return newItems.length;
@@ -624,8 +605,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (googleToken) {
       try {
         await saveCallPlansToSheet(nextPlans, googleToken);
-      } catch (e) {
+      } catch (e: any) {
         console.warn('Sheets bulk call plan upload failed:', e);
+        handleSheetsError(e, `${newItems.length} jadwal ditambahkan di tampilan`);
       }
     }
     return { successCount: newItems.length, errors: [] };
@@ -668,9 +650,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateMapping,
         bulkImportMappings,
 
-        createCallPlan,
         updateCallPlan,
-        deleteCallPlan,
         bulkAssignCallPlan,
         bulkImportCallPlans,
       }}
