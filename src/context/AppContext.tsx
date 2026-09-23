@@ -28,6 +28,7 @@ interface AppContextType {
   isConnectingGoogle: boolean;
   isLoading: boolean;
   syncStatus: 'idle' | 'syncing' | 'synced' | 'error';
+  hasEverSynced: boolean;
   lastSyncTime: string;
   errorMessage: string | null;
 
@@ -47,9 +48,8 @@ interface AppContextType {
   accessibleMds: UserMDS[];
 
   // Actions
-  login: (userId: string, password: string) => Promise<{ success: boolean; message?: string }>;
+  login: (email: string, password: string) => Promise<{ success: boolean; message?: string }>;
   logout: () => void;
-  switchUser: (userId: string) => void;
   connectGoogle: () => Promise<void>;
   disconnectGoogle: () => Promise<void>;
   syncWithGoogleSheets: () => Promise<void>;
@@ -116,11 +116,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return saved ? JSON.parse(saved) : [];
   });
 
+  // The single authoritative signal for "has a genuine full sync ever
+  // completed?" — set ONLY inside syncWithGoogleSheetsInternal, and ONLY
+  // when the core datasets (performance + userPics) actually came back with
+  // data. This is what the top-level app gate in App.tsx relies on, instead
+  // of guessing from individual array lengths (which can be misleading if a
+  // sync partially failed and left some caches populated but not others).
+  const [hasEverSynced, setHasEverSynced] = useState<boolean>(() => {
+    return localStorage.getItem('has_synced_once') === 'true';
+  });
+
   // Session State — defaults to null (NOT an auto-logged-in demo account).
-  // A previously saved session is restored only if that userId still exists
-  // in the cached (real) User PIC data; otherwise the session is discarded
-  // and the person has to log in again, e.g. if their account was removed.
+  // A previously saved session is restored only if BOTH a genuine full sync
+  // has happened before AND that userId still exists in the cached (real)
+  // User PIC data; otherwise the session is discarded and the person has to
+  // log in again — e.g. if their account was removed, or if the cache is
+  // partial/stale (some data cached, but never a complete successful sync).
   const [currentUser, setCurrentUser] = useState<UserPIC | null>(() => {
+    if (!hasEverSynced) return null;
     const saved = localStorage.getItem('pic_session');
     if (!saved) return null;
     try {
@@ -219,12 +232,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [currentUser, userMds]);
 
   // Auth actions
-  const login = async (userId: string, password: string) => {
+  const login = async (email: string, password: string) => {
     const found = userPics.find(
-      (u) => u.userId.toLowerCase() === userId.trim().toLowerCase()
+      (u) => u.email.toLowerCase() === email.trim().toLowerCase()
     );
     if (!found) {
-      return { success: false, message: 'User ID tidak ditemukan dalam data PIC.' };
+      return { success: false, message: 'Email tidak ditemukan dalam data PIC.' };
     }
     if (found.password && found.password !== password.trim()) {
       return { success: false, message: 'Password yang Anda masukkan salah.' };
@@ -235,13 +248,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const logout = () => {
     setCurrentUser(null);
-  };
-
-  const switchUser = (userId: string) => {
-    const found = userPics.find((u) => u.userId === userId);
-    if (found) {
-      setCurrentUser(found);
-    }
   };
 
   const connectGoogle = async () => {
@@ -293,6 +299,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       if (sheetsData.logs && sheetsData.logs.length > 0) {
         setLogs(sheetsData.logs);
+      }
+
+      // Mark a genuine full sync only when the CORE datasets actually came
+      // back with data — this is what gates the whole app shell (see
+      // hasEverSynced below), so it must not be set from a partial/failed
+      // sync where e.g. only userPics loaded but performance didn't.
+      if (
+        sheetsData.performance && sheetsData.performance.length > 0 &&
+        sheetsData.userPics && sheetsData.userPics.length > 0
+      ) {
+        setHasEverSynced(true);
+        localStorage.setItem('has_synced_once', 'true');
       }
 
       setSyncStatus('synced');
@@ -635,6 +653,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isConnectingGoogle,
         isLoading,
         syncStatus,
+        hasEverSynced,
         lastSyncTime,
         errorMessage,
 
@@ -653,7 +672,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         login,
         logout,
-        switchUser,
         connectGoogle,
         disconnectGoogle,
         syncWithGoogleSheets,

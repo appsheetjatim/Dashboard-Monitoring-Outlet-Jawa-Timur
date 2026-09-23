@@ -24,6 +24,7 @@ import {
   Clock,
   Sparkles,
   ExternalLink,
+  RotateCw,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
@@ -972,6 +973,26 @@ export const PerformanceDashboard: React.FC<Props> = ({
 
   return (
     <div className="space-y-6">
+      {performance.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-10 flex flex-col items-center text-center">
+          <div className="w-16 h-16 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-500 mb-4">
+            <FileSpreadsheet className="w-8 h-8" />
+          </div>
+          <h2 className="text-base font-bold text-slate-900 mb-1">Belum Ada Data Performance</h2>
+          <p className="text-xs text-slate-500 max-w-sm mb-5">
+            Data outlet belum tersambung ke Google Sheets di sesi ini. Klik tombol di bawah untuk menyinkronkan data terbaru.
+          </p>
+          <button
+            onClick={syncWithGoogleSheets}
+            disabled={syncStatus === 'syncing'}
+            className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors flex items-center gap-2 disabled:opacity-60"
+          >
+            <RotateCw className={`w-4 h-4 ${syncStatus === 'syncing' ? 'animate-spin' : ''}`} />
+            {syncStatus === 'syncing' ? 'Menyinkronkan...' : 'Sambungkan & Sync Data'}
+          </button>
+        </div>
+      ) : (
+      <>
       {/* Top Filter & Toolbar Bar */}
       <div className="bg-white p-4 lg:p-5 rounded-2xl shadow-xs border border-slate-200">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-100">
@@ -1022,19 +1043,21 @@ export const PerformanceDashboard: React.FC<Props> = ({
         </div>
 
         {/* Filter Controls Row */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 pt-4">
-          {/* Quick Search */}
-          <div className="relative">
+        <div className="pt-4 flex flex-col lg:flex-row gap-3">
+          {/* Quick Search — standalone, visually distinct from the filter group */}
+          <div className="relative lg:w-64 shrink-0">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
             <input
               type="text"
               placeholder="Cari kode/nama outlet..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+              className="w-full pl-9 pr-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
             />
           </div>
 
+          {/* Filter dropdowns — grouped together in one tinted container */}
+          <div className="flex-1 grid grid-cols-2 md:grid-cols-4 gap-2 bg-slate-50 border border-slate-100 rounded-xl p-2">
           {/* Distributor Filter */}
           <div>
             <select
@@ -1043,7 +1066,7 @@ export const PerformanceDashboard: React.FC<Props> = ({
                 setSelectedDist(e.target.value);
                 setSelectedDepo('ALL');
               }}
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
             >
               <option value="ALL">Semua Distributor ({distOptions.length})</option>
               {distOptions.map((d) => (
@@ -1059,7 +1082,7 @@ export const PerformanceDashboard: React.FC<Props> = ({
             <select
               value={selectedDepo}
               onChange={(e) => setSelectedDepo(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
             >
               <option value="ALL">Semua Depo ({depoOptions.length})</option>
               {depoOptions.map((d) => (
@@ -1075,7 +1098,7 @@ export const PerformanceDashboard: React.FC<Props> = ({
             <select
               value={selectedKabupaten}
               onChange={(e) => setSelectedKabupaten(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
             >
               <option value="ALL">Semua Kabupaten/Kota</option>
               {kabupatenOptions.map((k) => (
@@ -1091,7 +1114,7 @@ export const PerformanceDashboard: React.FC<Props> = ({
             <select
               value={selectedRing}
               onChange={(e) => setSelectedRing(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
             >
               <option value="ALL">Semua Ring Klasifikasi</option>
               <option value="Ring 1">Ring 1 (Mapping Active)</option>
@@ -1099,6 +1122,7 @@ export const PerformanceDashboard: React.FC<Props> = ({
               <option value="Ring 3">Ring 3 (Avg Sales ≥ 100rb)</option>
               <option value="Ring 4">Ring 4 (Avg Sales &lt; 100rb)</option>
             </select>
+          </div>
           </div>
         </div>
 
@@ -1220,7 +1244,13 @@ export const PerformanceDashboard: React.FC<Props> = ({
         </div>
 
         {/* Dorman / Churn Risk Watchlist */}
-        <div className="bg-rose-50/70 p-4 rounded-2xl border border-rose-200 shadow-xs flex flex-col justify-between">
+        <div
+          className={`p-4 rounded-2xl border shadow-xs flex flex-col justify-between transition-all ${
+            watchlistItems.length > 0
+              ? 'bg-rose-50/70 border-rose-300 border-2 shadow-rose-100/50'
+              : 'bg-rose-50/40 border-rose-100'
+          }`}
+        >
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-rose-700">Perlu Perhatian</span>
             <AlertTriangle className="w-4 h-4 text-rose-600" />
@@ -1308,12 +1338,12 @@ export const PerformanceDashboard: React.FC<Props> = ({
                 </div>
 
                 {/* Mini progress bar */}
-                <div className="w-full bg-slate-200/70 h-1.5 rounded-full mt-3 overflow-hidden">
+                <div className="w-full bg-slate-200 h-2.5 rounded-full mt-3 overflow-hidden ring-1 ring-black/5">
                   <div
                     className={`h-full rounded-full ${
-                      isR1 ? 'bg-emerald-500' : isR2 ? 'bg-blue-500' : isR3 ? 'bg-amber-500' : 'bg-slate-400'
+                      isR1 ? 'bg-emerald-500' : isR2 ? 'bg-blue-500' : isR3 ? 'bg-amber-500' : 'bg-slate-500'
                     }`}
-                    style={{ width: `${Math.min(100, item.omsetPct)}%` }}
+                    style={{ width: `${Math.max(3, Math.min(100, item.omsetPct))}%` }}
                   />
                 </div>
               </div>
@@ -1323,7 +1353,7 @@ export const PerformanceDashboard: React.FC<Props> = ({
       </div>
 
       {/* Sub-Navigation Tabs inside Performance */}
-      <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-100/90 rounded-2xl border border-slate-200 max-w-full overflow-x-auto">
+      <div className="flex flex-wrap items-center gap-1.5 p-1.5 bg-slate-100 rounded-2xl border border-slate-200 max-w-full overflow-x-auto">
         {[
           { id: 'overview', label: 'Tabel Detail Outlet' },
           { id: 'pareto', label: 'Tabel Pareto per Depo (80/20)' },
@@ -1341,8 +1371,8 @@ export const PerformanceDashboard: React.FC<Props> = ({
             onClick={() => setActiveSection(tab.id as any)}
             className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition-all whitespace-nowrap flex items-center gap-1.5 ${
               activeSection === tab.id
-                ? 'bg-white text-indigo-700 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
+                ? 'bg-white text-indigo-700 shadow-sm ring-1 ring-black/5'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
             }`}
           >
             <span>{tab.label}</span>
@@ -1893,6 +1923,8 @@ export const PerformanceDashboard: React.FC<Props> = ({
           </div>
         </div>
       )}
+    </>
+    )}
     </div>
   );
 };

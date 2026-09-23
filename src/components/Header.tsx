@@ -29,8 +29,6 @@ export const Header: React.FC<HeaderProps> = ({ onToggleMobileMenu }) => {
     syncWithGoogleSheets,
     syncStatus,
     lastSyncTime,
-    switchUser,
-    userPics,
     isConnectingGoogle,
   } = useApp();
 
@@ -61,10 +59,10 @@ export const Header: React.FC<HeaderProps> = ({ onToggleMobileMenu }) => {
               </div>
               <div className="hidden sm:block">
                 <h1 className="text-sm font-bold text-slate-900 leading-tight">
-                  Monitoring Outlet Distributor
+                  Dashboard Monitoring Outlet
                 </h1>
                 <p className="text-[11px] text-slate-500 leading-none">
-                  NFI Group • Jawa Timur
+                  Nutrifood Indonesia - Jawa Timur
                 </p>
               </div>
             </div>
@@ -73,32 +71,30 @@ export const Header: React.FC<HeaderProps> = ({ onToggleMobileMenu }) => {
           {/* Center: Sync & Google Sheets Connection Status */}
           <div className="hidden md:flex items-center gap-2">
             <div
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium border ${
+              className={`flex items-center gap-2.5 pl-3 pr-1 py-1 rounded-full text-xs font-medium border ${
                 googleUser
                   ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
                   : 'bg-amber-50 text-amber-800 border-amber-200'
               }`}
             >
               <span
-                className={`w-2 h-2 rounded-full ${
+                className={`w-2 h-2 rounded-full shrink-0 ${
                   googleUser ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
                 }`}
               />
-              <span className="truncate max-w-[200px]">
-                {googleUser ? `Sheets: ${googleUser.email}` : 'Demo Cache (Klik Sambungkan)'}
+              <span className="truncate max-w-[180px]">
+                {googleUser ? `Sheets: ${googleUser.email}` : 'Mode Cache (Klik Sambungkan)'}
               </span>
-            </div>
-
-            <div className="flex items-center gap-1.5 text-xs text-slate-500 bg-slate-100/80 px-2.5 py-1.5 rounded-lg">
-              <span>Data disinkronkan: <strong className="text-slate-700">{lastSyncTime}</strong></span>
+              <span className="w-px h-4 bg-current opacity-20 shrink-0" />
+              <span className="whitespace-nowrap opacity-80">{lastSyncTime}</span>
               <button
                 onClick={syncWithGoogleSheets}
                 disabled={syncStatus === 'syncing' || isConnectingGoogle}
                 title="Sinkronkan data manual dari Google Sheets"
-                className="p-1 rounded-md text-slate-600 hover:text-indigo-600 hover:bg-white transition-all disabled:opacity-50"
+                className="p-1.5 rounded-full hover:bg-white/60 transition-all disabled:opacity-50 shrink-0"
               >
                 <RotateCw
-                  className={`w-3.5 h-3.5 ${syncStatus === 'syncing' ? 'animate-spin text-indigo-600' : ''}`}
+                  className={`w-3.5 h-3.5 ${syncStatus === 'syncing' ? 'animate-spin' : ''}`}
                 />
               </button>
             </div>
@@ -183,29 +179,6 @@ export const Header: React.FC<HeaderProps> = ({ onToggleMobileMenu }) => {
                     </button>
 
                     <div className="my-1 border-t border-slate-100 pt-1">
-                      <p className="px-3 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                        Ganti Akun PIC (Demo)
-                      </p>
-                      {userPics.map((u) => (
-                        <button
-                          key={u.userId}
-                          onClick={() => {
-                            switchUser(u.userId);
-                            setShowProfileMenu(false);
-                          }}
-                          className={`w-full flex items-center justify-between px-3 py-1.5 text-xs rounded-lg transition-colors ${
-                            u.userId === currentUser.userId
-                              ? 'bg-indigo-50 text-indigo-700 font-semibold'
-                              : 'text-slate-600 hover:bg-slate-50'
-                          }`}
-                        >
-                          <span className="truncate">{u.namaPic}</span>
-                          <span className="text-[10px] text-slate-400 ml-2">{u.role}</span>
-                        </button>
-                      ))}
-                    </div>
-
-                    <div className="my-1 border-t border-slate-100 pt-1">
                       <button
                         onClick={() => {
                           logout();
@@ -231,7 +204,7 @@ export const Header: React.FC<HeaderProps> = ({ onToggleMobileMenu }) => {
               className={`w-2 h-2 rounded-full ${googleUser ? 'bg-emerald-500' : 'bg-amber-500'}`}
             />
             <span className="text-[11px] truncate max-w-[160px]">
-              {googleUser ? googleUser.email : 'Demo Cache'}
+              {googleUser ? googleUser.email : 'Mode Cache'}
             </span>
           </div>
           <div className="flex items-center gap-2">
