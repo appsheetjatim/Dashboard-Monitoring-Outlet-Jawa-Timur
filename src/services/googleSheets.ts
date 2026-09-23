@@ -140,14 +140,25 @@ async function overwriteSheetValues(
   rows: any[][],
   token: string
 ): Promise<boolean> {
-  // Clear first
+  // Clear first. This step MUST succeed before writing — if the sheet isn't
+  // actually cleared and the new data has FEWER rows than what's currently
+  // there (e.g. after a delete), the extra old rows at the bottom would be
+  // left untouched, silently un-deleting whatever was just removed. A
+  // previous version of this function swallowed clear failures with
+  // `.catch(() => null)`, which is exactly how that could happen unnoticed.
   const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(
     sheetName
   )}:clear`;
-  await fetch(clearUrl, {
+  const clearRes = await fetch(clearUrl, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
-  }).catch(() => null);
+  });
+  if (!clearRes.ok) {
+    const err = await clearRes.json().catch(() => ({}));
+    throw new Error(
+      err.error?.message || `Gagal membersihkan sheet "${sheetName}" sebelum menyimpan perubahan.`
+    );
+  }
 
   // Write all rows
   const allValues = [headers, ...rows];
@@ -430,49 +441,48 @@ export async function appendLogActivityToSheet(log: LogActivityRecord, token: st
   return appendSheetValues('Log Activity!A:F', [row], token);
 }
 
-// Write operation: Save Mappings to Sheet
-export async function saveMappingsToSheet(mappings: OutletMapping[], token: string) {
-  const headers = [
-    'Mapping ID',
-    'Customer SO Group Area Code',
-    'Customer SO Group Area',
-    'Klasifikasi Outlet',
-    'Sub Dist BSP',
-    'Depo BSP',
-    'Nama Customer BSP',
-    'BSP Code 1',
-    'BSP Code 2',
-    'BSP Code 3',
-    'Sub Dist UDN',
-    'Nama Customer UDN',
-    'UDN Code 1',
-    'UDN Code 2',
-    'UDN Code 3',
-    'Kabupaten',
-    'Kecamatan',
-    'Alamat',
-    'Dishub',
-    'Rak 50 cm',
-    'Rak 65 cm',
-    'Rak 75 cm',
-    'Rak Dua Sisi',
-    'Rak Pack',
-    'Rak Custome',
-    'Display Wow All',
-    'Biaya Display Wow (Rcg)',
-    'Display Wow Hilo',
-    'Biaya Display Wow Hilo (Rcg)',
-    'Nama MDS',
-    'PIC',
-    'Mapping Date',
-    'Last Updated',
-    'Latitude',
-    'Longitude',
-    'Status',
-    'Notes',
-  ];
+const MAPPING_HEADERS = [
+  'Mapping ID',
+  'Customer SO Group Area Code',
+  'Customer SO Group Area',
+  'Klasifikasi Outlet',
+  'Sub Dist BSP',
+  'Depo BSP',
+  'Nama Customer BSP',
+  'BSP Code 1',
+  'BSP Code 2',
+  'BSP Code 3',
+  'Sub Dist UDN',
+  'Nama Customer UDN',
+  'UDN Code 1',
+  'UDN Code 2',
+  'UDN Code 3',
+  'Kabupaten',
+  'Kecamatan',
+  'Alamat',
+  'Dishub',
+  'Rak 50 cm',
+  'Rak 65 cm',
+  'Rak 75 cm',
+  'Rak Dua Sisi',
+  'Rak Pack',
+  'Rak Custome',
+  'Display Wow All',
+  'Biaya Display Wow (Rcg)',
+  'Display Wow Hilo',
+  'Biaya Display Wow Hilo (Rcg)',
+  'Nama MDS',
+  'PIC',
+  'Mapping Date',
+  'Last Updated',
+  'Latitude',
+  'Longitude',
+  'Status',
+  'Notes',
+];
 
-  const rows = mappings.map((m) => [
+function mappingToRow(m: OutletMapping): any[] {
+  return [
     m.mappingId,
     m.customerSoGroupAreaCode,
     m.customerSoGroupArea,
@@ -510,9 +520,60 @@ export async function saveMappingsToSheet(mappings: OutletMapping[], token: stri
     m.longitude ?? '',
     m.status,
     m.notes,
-  ]);
+  ];
+}
 
-  return overwriteSheetValues('Mapping', headers, rows, token);
+// Full rewrite — still used for bulk import (many rows at once, ordering
+// doesn't matter) and as a one-off recovery tool if ever needed. Single
+// create/update now go through the row-targeted functions below instead, so
+// two people editing DIFFERENT outlets at the same time no longer overwrite
+// each other's changes via a full-sheet clear+rewrite.
+export async function saveMappingsToSheet(mappings: OutletMapping[], token: string) {
+  const rows = mappings.map(mappingToRow);
+  return overwriteSheetValues('Mapping', MAPPING_HEADERS, rows, token);
+}
+
+// Create: append ONE new row at the end of the sheet — never touches any
+// existing row, so it can't collide with anyone else's concurrent edit.
+export async function appendMappingToSheet(mapping: OutletMapping, token: string): Promise<boolean> {
+  const row = mappingToRow(mapping);
+  return appendSheetValues('Mapping!A:A', [row], token);
+}
+
+// Finds which sheet row (1-indexed, header included) a given Mapping ID is
+// currently on, by reading only column A (cheap) rather than the whole sheet.
+async function findMappingRowNumber(mappingId: string, token: string): Promise<number | null> {
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(
+    'Mapping!A:A'
+  )}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || 'Gagal membaca data Mapping dari Google Sheets.');
+  }
+  const data = await res.json();
+  const colA: string[][] = data.values || [];
+  for (let i = 1; i < colA.length; i++) {
+    if (colA[i]?.[0] === mappingId) {
+      return i + 1; // sheet rows are 1-indexed; colA[0] is the header row
+    }
+  }
+  return null;
+}
+
+// Edit: update ONLY the one row matching this Mapping ID, in place — every
+// other row in the sheet is left completely untouched. This is what fixes
+// the race condition where editing outlet A could accidentally wipe out a
+// concurrent edit someone else just made to unrelated outlet B.
+export async function updateMappingInSheet(mapping: OutletMapping, token: string): Promise<boolean> {
+  const rowNumber = await findMappingRowNumber(mapping.mappingId, token);
+  if (rowNumber === null) {
+    throw new Error(
+      `Mapping ID "${mapping.mappingId}" tidak ditemukan di sheet saat ini — mungkin baris ini baru saja dihapus/diubah oleh orang lain. Coba sync ulang dan periksa kembali.`
+    );
+  }
+  const row = mappingToRow(mapping);
+  return updateSheetValues(`Mapping!A${rowNumber}`, [row], token);
 }
 
 // Write operation: Save Call Plans to Sheet

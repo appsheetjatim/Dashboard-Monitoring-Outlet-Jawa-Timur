@@ -8,7 +8,6 @@ import { Toast, ToastState } from './Toast';
 import {
   Plus,
   Edit2,
-  Trash2,
   Search,
   Filter,
   Download,
@@ -40,7 +39,6 @@ export const MappingManagement: React.FC = () => {
     accessibleMds,
     createMapping,
     updateMapping,
-    deleteMapping,
     bulkImportMappings,
     accessibleDistributors,
     accessibleDepo,
@@ -694,18 +692,6 @@ export const MappingManagement: React.FC = () => {
     } catch (err: any) {
       setFormError(err.message || 'Gagal menyimpan mapping.');
       setToast({ message: err.message || 'Gagal menyimpan mapping.', type: 'error' });
-    }
-  };
-
-  // Delete Mapping
-  const handleDelete = async (id: string, name: string) => {
-    if (window.confirm(`Yakin ingin menghapus mapping outlet "${name}"? Aksi ini akan dicatat di Log Activity.`)) {
-      try {
-        await deleteMapping(id);
-        setToast({ message: `Mapping "${name}" berhasil dihapus.`, type: 'success' });
-      } catch (err: any) {
-        setToast({ message: err.message || 'Gagal menghapus mapping.', type: 'error' });
-      }
     }
   };
 
@@ -1395,22 +1381,13 @@ export const MappingManagement: React.FC = () => {
                         <div className="text-[10px] text-slate-400">PIC: {m.pic || '-'}</div>
                       </td>
                       <td className="py-3 px-3 text-center whitespace-nowrap">
-                        <div className="flex items-center justify-center gap-1">
-                          <button
-                            onClick={() => handleOpenEdit(m)}
-                            className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
-                            title="Edit Mapping"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleDelete(m.mappingId, m.customerSoGroupArea)}
-                            className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 transition-colors"
-                            title="Hapus Mapping"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+                        <button
+                          onClick={() => handleOpenEdit(m)}
+                          className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+                          title="Edit Mapping"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
                       </td>
                     </tr>
                   );
@@ -1626,6 +1603,10 @@ export const MappingManagement: React.FC = () => {
                             <div className="text-[11px] text-slate-400">
                               {p.kodeCustNfiGroup} • {p.kecamatan}, {p.kabupaten} ({p.depo})
                             </div>
+                            <div className="text-[10px] text-slate-500 mt-0.5">
+                              {p.sku2026} SKU • {p.avgPa2026.toFixed(1)} PA ({p.pa2026.toFixed(0)}%) • Avg Sales: Rp{' '}
+                              {p.avgSales2026.toLocaleString('id-ID')}
+                            </div>
                           </div>
                           <div className="text-right">
                             <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
@@ -1703,6 +1684,10 @@ export const MappingManagement: React.FC = () => {
 
                           <p className="text-[11px] text-slate-500 pl-7">
                             {cand.outlet.alamat} • {cand.outlet.kecamatan}
+                          </p>
+                          <p className="text-[10px] text-slate-400 pl-7">
+                            {cand.outlet.sku2026} SKU • {cand.outlet.avgPa2026.toFixed(1)} PA ({cand.outlet.pa2026.toFixed(0)}%) • Avg Sales: Rp{' '}
+                            {cand.outlet.avgSales2026.toLocaleString('id-ID')}
                           </p>
 
                           {/* Word matching comparison badges */}
@@ -1784,6 +1769,10 @@ export const MappingManagement: React.FC = () => {
                                     </div>
                                     <div className="text-[11px] text-slate-400">
                                       {out.kodeCustNfiGroup} • {out.kecamatan}, {out.kabupaten} ({out.depo})
+                                    </div>
+                                    <div className="text-[10px] text-slate-500">
+                                      {out.sku2026} SKU • {out.avgPa2026.toFixed(1)} PA ({out.pa2026.toFixed(0)}%) • Avg Sales: Rp{' '}
+                                      {out.avgSales2026.toLocaleString('id-ID')}
                                     </div>
                                   </div>
                                 </div>

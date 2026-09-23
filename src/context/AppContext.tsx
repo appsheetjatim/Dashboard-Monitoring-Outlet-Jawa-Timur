@@ -16,6 +16,8 @@ import {
   initGoogleAuth,
   fetchAllGoogleSheetsData,
   saveMappingsToSheet,
+  appendMappingToSheet,
+  updateMappingInSheet,
   saveCallPlansToSheet,
   updateUserPicPasswordInSheet,
   appendLogActivityToSheet,
@@ -58,7 +60,6 @@ interface AppContextType {
   // Mapping mutations
   createMapping: (item: Omit<OutletMapping, 'mappingId' | 'mappingDate' | 'lastUpdated'>) => Promise<string>;
   updateMapping: (mappingId: string, updates: Partial<OutletMapping>) => Promise<boolean>;
-  deleteMapping: (mappingId: string) => Promise<boolean>;
   bulkImportMappings: (items: Array<Omit<OutletMapping, 'mappingId' | 'mappingDate' | 'lastUpdated'>>) => Promise<{ successCount: number; errors: string[] }>;
 
   // Call Plan mutations
@@ -405,9 +406,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (googleToken) {
       try {
-        await saveMappingsToSheet(nextMappings, googleToken);
-      } catch (e) {
-        console.warn('Sheets save failed:', e);
+        await appendMappingToSheet(newMapping, googleToken);
+      } catch (e: any) {
+        console.warn('Sheets append failed:', e);
+        throw new Error(
+          `Mapping ditambahkan di tampilan, tapi GAGAL disimpan ke Google Sheets (${e.message || 'error tidak diketahui'}). Coba sync ulang untuk memastikan.`
+        );
       }
     }
     return mappingId;
@@ -440,29 +444,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (googleToken) {
       try {
-        await saveMappingsToSheet(nextMappings, googleToken);
-      } catch (e) {
+        await updateMappingInSheet(updated, googleToken);
+      } catch (e: any) {
         console.warn('Sheets update failed:', e);
-      }
-    }
-    return true;
-  };
-
-  const deleteMapping = async (mappingId: string): Promise<boolean> => {
-    const existing = mappings.find((m) => m.mappingId === mappingId);
-    if (!existing) return false;
-
-    const nextMappings = mappings.filter((m) => m.mappingId !== mappingId);
-    setMappings(nextMappings);
-
-    const detail = `Record dihapus: ${existing.customerSoGroupArea} (${existing.customerSoGroupAreaCode}), BSP: ${existing.bspCode1 || '-'}`;
-    await addLogRecord('Delete', 'Mapping', mappingId, detail);
-
-    if (googleToken) {
-      try {
-        await saveMappingsToSheet(nextMappings, googleToken);
-      } catch (e) {
-        console.warn('Sheets delete failed:', e);
+        throw new Error(
+          `Mapping diperbarui di tampilan, tapi GAGAL disimpan ke Google Sheets (${e.message || 'error tidak diketahui'}). Coba sync ulang untuk memastikan.`
+        );
       }
     }
     return true;
@@ -679,7 +666,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         createMapping,
         updateMapping,
-        deleteMapping,
         bulkImportMappings,
 
         createCallPlan,
