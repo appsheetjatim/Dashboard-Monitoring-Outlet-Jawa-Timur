@@ -12,7 +12,7 @@ interface Props {
 type ShadingMetric = 'none' | 'jumlah_toko' | 'omset' | 'dorman';
 
 export const OutletMap: React.FC<Props> = ({ onSelectOutletForCallPlan }) => {
-  const { performance, mappings, callPlans, currentUser, accessibleDepo } = useApp();
+  const { performance, mappings, callPlans, currentUser, accessibleDepo, accessibleKabupaten } = useApp();
   const isManager = currentUser?.role === 'Manager';
 
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -62,14 +62,29 @@ export const OutletMap: React.FC<Props> = ({ onSelectOutletForCallPlan }) => {
 
   // Clean composite key + name pieces for every Kecamatan feature in the
   // boundary data (once GeoJSON is loaded).
+  // Restrict which Kecamatan polygons a Supervisor sees on the shading layer
+  // to only their assigned Kabupaten/Kota (sheet "Kab") — Manager always
+  // sees every Kecamatan in Jawa Timur, same as elsewhere in the app.
+  const visibleKecamatanGeoJson = useMemo(() => {
+    if (!kecamatanGeoJson) return null;
+    if (isManager || accessibleKabupaten.length === 0) return kecamatanGeoJson;
+
+    const allowed = accessibleKabupaten.map((k) => k.toUpperCase().trim());
+    const features = kecamatanGeoJson.features.filter((f: any) => {
+      const gk = String(f.properties?.KAB_KOTA || '').toUpperCase().trim();
+      return allowed.some((a) => a === gk || a.includes(gk) || gk.includes(a));
+    });
+    return { ...kecamatanGeoJson, features };
+  }, [kecamatanGeoJson, isManager, accessibleKabupaten]);
+
   const geoFeatureKeys = useMemo(() => {
-    if (!kecamatanGeoJson) return [];
-    return kecamatanGeoJson.features.map((f: any) => ({
+    if (!visibleKecamatanGeoJson) return [];
+    return visibleKecamatanGeoJson.features.map((f: any) => ({
       key: `${f.properties.KECAMATAN}|${f.properties.KAB_KOTA}`.toUpperCase(),
       kecamatan: String(f.properties.KECAMATAN || '').toUpperCase().trim(),
       kabKota: String(f.properties.KAB_KOTA || '').toUpperCase().trim(),
     }));
-  }, [kecamatanGeoJson]);
+  }, [visibleKecamatanGeoJson]);
 
   // Bridges the app's raw (kecamatan, kabupaten) fields to the matching
   // boundary feature's clean key. Tries an exact match first; if that fails
@@ -179,14 +194,14 @@ export const OutletMap: React.FC<Props> = ({ onSelectOutletForCallPlan }) => {
       return;
     }
 
-    if (!kecamatanGeoJson) return; // still loading
+    if (!visibleKecamatanGeoJson) return; // still loading
 
     // Only (re)build the polygon geometry once per load — switching between
     // metrics afterwards just restyles the same shapes instead of
     // re-parsing and re-adding all 668 features from scratch each time.
     if (!shadingDataLoadedRef.current) {
       layer.clearLayers();
-      layer.addData(kecamatanGeoJson);
+      layer.addData(visibleKecamatanGeoJson);
       shadingDataLoadedRef.current = true;
     }
 
@@ -230,7 +245,7 @@ export const OutletMap: React.FC<Props> = ({ onSelectOutletForCallPlan }) => {
     });
 
     layer.bringToBack();
-  }, [shadingMetric, kecamatanGeoJson, kecamatanStats]);
+  }, [shadingMetric, visibleKecamatanGeoJson, kecamatanStats]);
 
   useEffect(() => {
     if (!mapInstanceRef.current || !markersLayerRef.current) return;

@@ -25,6 +25,15 @@ export interface DistAssignment {
   namaPic: string;
 }
 
+// Sheet "Kab": maps a PIC to the Kabupaten/Kota they're responsible for.
+// Used ONLY to scope which Kecamatan polygons render in the Peta Sebaran
+// shading layer — separate from the Depo-based access system (DistAssignment)
+// used everywhere else, since Depo doesn't map cleanly to Kabupaten.
+export interface KabAssignment {
+  namaPic: string;
+  kabupaten: string;
+}
+
 export interface OutletPerformance {
   dist: string;
   subDist: string;

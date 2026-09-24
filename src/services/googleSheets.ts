@@ -15,6 +15,7 @@ import {
   UserPIC,
   UserMDS,
   DistAssignment,
+  KabAssignment,
   LogActivityRecord,
 } from '../types';
 
@@ -261,6 +262,7 @@ export async function fetchAllGoogleSheetsData(token: string) {
     picRows,
     mdsRows,
     distRows,
+    kabRows,
     mappingRows,
     callPlanRows,
     logRows,
@@ -269,6 +271,7 @@ export async function fetchAllGoogleSheetsData(token: string) {
     fetchSheetValues('User PIC!A2:G', token),
     fetchSheetValues('User MDS!A2:E', token),
     fetchSheetValues('Dist!A2:D', token),
+    fetchSheetValues('Kab!A2:B', token),
     fetchSheetValues('Mapping!A2:AJ', token),
     fetchSheetValues('Call Plan!A2:O', token),
     fetchSheetValues('Log Activity!A2:F', token),
@@ -279,6 +282,7 @@ export async function fetchAllGoogleSheetsData(token: string) {
     userPics: parseUserPicRows(picRows),
     userMds: parseUserMdsRows(mdsRows),
     distAssignments: parseDistRows(distRows),
+    kabAssignments: parseKabRows(kabRows),
     mappings: parseMappingRows(mappingRows),
     callPlans: parseCallPlanRows(callPlanRows),
     logs: parseLogRows(logRows),
@@ -367,6 +371,16 @@ function parseDistRows(rows: any[][] | null): DistAssignment[] | null {
     subDist: r[1] || '',
     depo: r[2] || '',
     namaPic: r[3] || '',
+  }));
+}
+
+// Sheet "Kab": columns are Nama PIC, Kabupaten (one row per PIC-Kabupaten
+// pair, same one-row-per-assignment pattern as the Dist sheet).
+function parseKabRows(rows: any[][] | null): KabAssignment[] | null {
+  if (!rows) return null; // fetch genuinely failed — do not overwrite existing data with this
+  return rows.map((r) => ({
+    namaPic: r[0] || '',
+    kabupaten: r[1] || '',
   }));
 }
 

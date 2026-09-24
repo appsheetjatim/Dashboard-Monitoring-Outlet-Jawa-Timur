@@ -4,6 +4,7 @@ import {
   UserPIC,
   UserMDS,
   DistAssignment,
+  KabAssignment,
   OutletPerformance,
   OutletMapping,
   CallPlanItem,
@@ -43,6 +44,7 @@ interface AppContextType {
   userPics: UserPIC[];
   userMds: UserMDS[];
   distAssignments: DistAssignment[];
+  kabAssignments: KabAssignment[];
   mappings: OutletMapping[];
   callPlans: CallPlanItem[];
   logs: LogActivityRecord[];
@@ -50,6 +52,7 @@ interface AppContextType {
   // Filtered views based on login role
   accessibleDistributors: string[];
   accessibleDepo: string[];
+  accessibleKabupaten: string[];
   accessibleMds: UserMDS[];
 
   // Actions
@@ -95,6 +98,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [distAssignments, setDistAssignments] = useState<DistAssignment[]>(() => {
     const saved = localStorage.getItem('dist_assignments_cache');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  const [kabAssignments, setKabAssignments] = useState<KabAssignment[]>(() => {
+    const saved = localStorage.getItem('kab_assignments_cache');
     return saved ? JSON.parse(saved) : [];
   });
 
@@ -168,6 +176,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Persist local state caches
   useEffect(() => {
+    localStorage.setItem('performance_raw_cache', JSON.stringify(rawPerformance));
+  }, [rawPerformance]);
+
+  useEffect(() => {
+    localStorage.setItem('mds_users_cache', JSON.stringify(userMds));
+  }, [userMds]);
+
+  useEffect(() => {
+    localStorage.setItem('dist_assignments_cache', JSON.stringify(distAssignments));
+  }, [distAssignments]);
+
+  useEffect(() => {
+    localStorage.setItem('kab_assignments_cache', JSON.stringify(kabAssignments));
+  }, [kabAssignments]);
+
+  useEffect(() => {
     localStorage.setItem('mappings_cache', JSON.stringify(mappings));
   }, [mappings]);
 
@@ -225,6 +249,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return Array.from(new Set(myAssignments.map((d) => d.depo)));
   }, [currentUser, distAssignments, rawPerformance]);
 
+  // Scopes ONLY the Kecamatan shading layer on Peta Sebaran Outlet — a
+  // separate dimension from accessibleDepo above, since Depo doesn't map
+  // cleanly to Kabupaten/Kota (a Depo can span multiple Kabupaten). Manager
+  // always sees every Kabupaten in Jawa Timur, same as every other access
+  // list in this app.
+  const accessibleKabupaten = useMemo(() => {
+    if (!currentUser) return [];
+    if (currentUser.role === 'Manager') {
+      return Array.from(new Set(rawPerformance.map((p) => p.kabupaten)));
+    }
+    const myAssignments = kabAssignments.filter((k) => k.namaPic.toLowerCase() === currentUser.namaPic.toLowerCase());
+    return Array.from(new Set(myAssignments.map((k) => k.kabupaten)));
+  }, [currentUser, kabAssignments, rawPerformance]);
+
   const accessibleMds = useMemo(() => {
     if (!currentUser) return [];
     if (currentUser.role === 'Manager') {
@@ -239,10 +277,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       (u) => u.email.toLowerCase() === email.trim().toLowerCase()
     );
     if (!found) {
-      return { success: false, message: 'Email tidak ditemukan dalam data PIC.' };
+      return { success: false, message: 'Email not found in PIC records.' };
     }
     if (found.password && found.password !== password.trim()) {
-      return { success: false, message: 'Password yang Anda masukkan salah.' };
+      return { success: false, message: 'Incorrect password.' };
     }
     setCurrentUser(found);
     return { success: true };
@@ -314,6 +352,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       if (sheetsData.distAssignments !== null) {
         setDistAssignments(sheetsData.distAssignments);
+      }
+      if (sheetsData.kabAssignments !== null) {
+        setKabAssignments(sheetsData.kabAssignments);
       }
       if (sheetsData.mappings !== null) {
         setMappings(sheetsData.mappings);
@@ -631,12 +672,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         userPics,
         userMds,
         distAssignments,
+        kabAssignments,
         mappings,
         callPlans,
         logs,
 
         accessibleDistributors,
         accessibleDepo,
+        accessibleKabupaten,
         accessibleMds,
 
         login,
