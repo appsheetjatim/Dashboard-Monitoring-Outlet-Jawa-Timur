@@ -9,6 +9,8 @@ interface Props {
   onSelectOutletForCallPlan?: (code: string) => void;
 }
 
+type ShadingMetric = 'none' | 'jumlah_toko' | 'omset' | 'dorman';
+
 export const OutletMap: React.FC<Props> = ({ onSelectOutletForCallPlan }) => {
   const { performance, mappings, callPlans, currentUser, accessibleDepo } = useApp();
   const isManager = currentUser?.role === 'Manager';
@@ -16,6 +18,13 @@ export const OutletMap: React.FC<Props> = ({ onSelectOutletForCallPlan }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
+  const shadingLayerRef = useRef<L.GeoJSON | null>(null);
+  const shadingDataLoadedRef = useRef(false);
+
+  // Kecamatan boundary shading
+  const [shadingMetric, setShadingMetric] = useState<ShadingMetric>('none');
+  const [kecamatanGeoJson, setKecamatanGeoJson] = useState<any | null>(null);
+  const [isLoadingBoundaries, setIsLoadingBoundaries] = useState(false);
 
   // Filters
   const [selectedRing, setSelectedRing] = useState<string[]>([]);
@@ -47,9 +56,79 @@ export const OutletMap: React.FC<Props> = ({ onSelectOutletForCallPlan }) => {
   }, [performance, selectedRing, selectedDepo, searchQuery]);
 
   const depoOptions = useMemo(() => {
-    if (!isManager) return accessibleDepo;
-    return Array.from(new Set(performance.map((p) => p.depo).filter(Boolean)));
+    if (!isManager) return [...accessibleDepo].sort();
+    return Array.from(new Set(performance.map((p) => p.depo).filter(Boolean))).sort();
   }, [performance, isManager, accessibleDepo]);
+
+  // Clean composite key + name pieces for every Kecamatan feature in the
+  // boundary data (once GeoJSON is loaded).
+  const geoFeatureKeys = useMemo(() => {
+    if (!kecamatanGeoJson) return [];
+    return kecamatanGeoJson.features.map((f: any) => ({
+      key: `${f.properties.KECAMATAN}|${f.properties.KAB_KOTA}`.toUpperCase(),
+      kecamatan: String(f.properties.KECAMATAN || '').toUpperCase().trim(),
+      kabKota: String(f.properties.KAB_KOTA || '').toUpperCase().trim(),
+    }));
+  }, [kecamatanGeoJson]);
+
+  // Bridges the app's raw (kecamatan, kabupaten) fields to the matching
+  // boundary feature's clean key. Tries an exact match first; if that fails
+  // — e.g. because the app's "kecamatan" field already has the Kabupaten/
+  // Kota name appended to it, like "KLOJEN MALANG" instead of clean
+  // "KLOJEN" — falls back to checking whether the boundary's clean
+  // kecamatan name is contained within the app's field, with the Kabupaten
+  // side also lining up so a same-named kecamatan in a different
+  // Kabupaten/Kota isn't matched by mistake. Memoized per unique raw pair
+  // (not per outlet), since there are far fewer distinct pairs than outlets.
+  const resolveGeoKey = useMemo(() => {
+    const cache = new Map<string, string | null>();
+    return (rawKecamatan: string, rawKabupaten: string): string | null => {
+      const cacheKey = `${rawKecamatan}|${rawKabupaten}`.toUpperCase();
+      if (cache.has(cacheKey)) return cache.get(cacheKey)!;
+
+      const ak = (rawKecamatan || '').toUpperCase().trim();
+      const ab = (rawKabupaten || '').toUpperCase().trim();
+
+      let found = geoFeatureKeys.find((g: { key: string; kecamatan: string; kabKota: string }) => g.kecamatan === ak && g.kabKota === ab);
+      if (!found) {
+        found = geoFeatureKeys.find(
+          (g: { key: string; kecamatan: string; kabKota: string }) =>
+            g.kecamatan.length > 0 &&
+            (ak.startsWith(g.kecamatan) || ak.includes(g.kecamatan)) &&
+            (ab === g.kabKota || ab.includes(g.kabKota) || g.kabKota.includes(ab))
+        );
+      }
+      const result = found ? found.key : null;
+      cache.set(cacheKey, result);
+      return result;
+    };
+  }, [geoFeatureKeys]);
+
+  // Per-Kecamatan aggregate stats for shading — keyed by the boundary
+  // feature's own clean "KECAMATAN|KAB_KOTA" key (resolved via
+  // resolveGeoKey above), so lookups during rendering stay a simple exact
+  // match even though the raw app data doesn't line up 1:1.
+  const kecamatanStats = useMemo(() => {
+    const stats: Record<string, { jumlahToko: number; omset: number; dorman: number }> = {};
+    mappedOutlets.forEach((item) => {
+      const key = resolveGeoKey(item.kecamatan, item.kabupaten);
+      if (!key) return;
+      if (!stats[key]) stats[key] = { jumlahToko: 0, omset: 0, dorman: 0 };
+      stats[key].jumlahToko += 1;
+      stats[key].omset += item.omset2026 || 0;
+      if (item.isDormant) stats[key].dorman += 1;
+    });
+    return stats;
+  }, [mappedOutlets, resolveGeoKey]);
+  useEffect(() => {
+    if (shadingMetric === 'none' || kecamatanGeoJson || isLoadingBoundaries) return;
+    setIsLoadingBoundaries(true);
+    fetch('/data/jatim-kecamatan.geojson')
+      .then((res) => res.json())
+      .then((data) => setKecamatanGeoJson(data))
+      .catch((err) => console.warn('Failed to load kecamatan boundaries:', err))
+      .finally(() => setIsLoadingBoundaries(false));
+  }, [shadingMetric, kecamatanGeoJson, isLoadingBoundaries]);
 
   // Initialize Map
   useEffect(() => {
@@ -72,13 +151,87 @@ export const OutletMap: React.FC<Props> = ({ onSelectOutletForCallPlan }) => {
     markersLayerRef.current = layerGroup;
     mapInstanceRef.current = map;
 
+    const shadingLayer = L.geoJSON(undefined, { style: () => ({ opacity: 0 }) }).addTo(map);
+    shadingLayerRef.current = shadingLayer;
+    // Keep shading below the marker layer so pins always stay clickable on top
+    shadingLayer.bringToBack();
+
     return () => {
       map.remove();
       mapInstanceRef.current = null;
     };
   }, []);
 
-  // Update Markers when filtered outlets change
+  // Render/update the choropleth shading whenever the metric, boundary data,
+  // or underlying stats change.
+  useEffect(() => {
+    const layer = shadingLayerRef.current;
+    if (!layer || !mapInstanceRef.current) return;
+
+    if (shadingMetric === 'none') {
+      // Fully detach the geometry when shading is off, so panning/zooming
+      // goes back to exactly the same performance as pin-only mode — not
+      // just hidden (which would still cost redraw work on every pan/zoom).
+      if (shadingDataLoadedRef.current) {
+        layer.clearLayers();
+        shadingDataLoadedRef.current = false;
+      }
+      return;
+    }
+
+    if (!kecamatanGeoJson) return; // still loading
+
+    // Only (re)build the polygon geometry once per load — switching between
+    // metrics afterwards just restyles the same shapes instead of
+    // re-parsing and re-adding all 668 features from scratch each time.
+    if (!shadingDataLoadedRef.current) {
+      layer.clearLayers();
+      layer.addData(kecamatanGeoJson);
+      shadingDataLoadedRef.current = true;
+    }
+
+    const metricKey =
+      shadingMetric === 'jumlah_toko' ? 'jumlahToko' : shadingMetric === 'omset' ? 'omset' : 'dorman';
+    const baseColor =
+      shadingMetric === 'dorman' ? '#e11d48' /* rose-600 */ : '#4f46e5' /* indigo-600 */;
+
+    const maxValue = Math.max(
+      1,
+      ...Object.values(kecamatanStats).map((s) => s[metricKey as keyof typeof s])
+    );
+
+    layer.setStyle((feature) => {
+      const key = `${feature?.properties?.KECAMATAN}|${feature?.properties?.KAB_KOTA}`.toUpperCase();
+      const value = kecamatanStats[key]?.[metricKey as keyof (typeof kecamatanStats)[string]] || 0;
+      const intensity = Math.min(1, value / maxValue);
+      return {
+        color: baseColor,
+        weight: 1,
+        opacity: 0.5,
+        fillColor: baseColor,
+        fillOpacity: value > 0 ? 0.15 + intensity * 0.6 : 0.03,
+      };
+    });
+
+    layer.eachLayer((l) => {
+      const feature = (l as any).feature;
+      const key = `${feature?.properties?.KECAMATAN}|${feature?.properties?.KAB_KOTA}`.toUpperCase();
+      const stat = kecamatanStats[key];
+      const metricLabel =
+        shadingMetric === 'jumlah_toko'
+          ? `${stat?.jumlahToko || 0} outlet`
+          : shadingMetric === 'omset'
+          ? `Rp ${(stat?.omset || 0).toLocaleString('id-ID')}`
+          : `${stat?.dorman || 0} outlet dorman`;
+      (l as L.Layer).bindTooltip(
+        `<strong>${feature?.properties?.KECAMATAN}</strong><br/>${feature?.properties?.KAB_KOTA}<br/>${metricLabel}`,
+        { sticky: true }
+      );
+    });
+
+    layer.bringToBack();
+  }, [shadingMetric, kecamatanGeoJson, kecamatanStats]);
+
   useEffect(() => {
     if (!mapInstanceRef.current || !markersLayerRef.current) return;
 
@@ -166,21 +319,47 @@ export const OutletMap: React.FC<Props> = ({ onSelectOutletForCallPlan }) => {
           </div>
 
           {/* Legend */}
-          <div className="flex flex-wrap items-center gap-2">
-            {[
-              { label: 'Ring 1', color: 'bg-emerald-500' },
-              { label: 'Ring 2', color: 'bg-blue-500' },
-              { label: 'Ring 3', color: 'bg-amber-500' },
-              { label: 'Ring 4', color: 'bg-slate-500' },
-            ].map((r) => (
-              <span
-                key={r.label}
-                className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 bg-slate-50 rounded-lg border border-slate-200"
-              >
-                <span className={`w-2.5 h-2.5 rounded-full ${r.color}`} />
-                <span>{r.label}</span>
-              </span>
-            ))}
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex flex-wrap items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg p-1">
+              {[
+                { id: 'none', label: 'Tanpa Shading' },
+                { id: 'jumlah_toko', label: 'Jumlah Toko' },
+                { id: 'omset', label: 'Omset' },
+                { id: 'dorman', label: 'Outlet Dorman' },
+              ].map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setShadingMetric(m.id as ShadingMetric)}
+                  className={`px-2.5 py-1 text-[11px] font-semibold rounded-md transition-colors ${
+                    shadingMetric === m.id
+                      ? 'bg-indigo-600 text-white'
+                      : 'text-slate-600 hover:bg-white'
+                  }`}
+                >
+                  {m.label}
+                </button>
+              ))}
+              {isLoadingBoundaries && (
+                <span className="px-2 text-[11px] text-slate-400">Memuat batas wilayah...</span>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {[
+                { label: 'Ring 1', color: 'bg-emerald-500' },
+                { label: 'Ring 2', color: 'bg-blue-500' },
+                { label: 'Ring 3', color: 'bg-amber-500' },
+                { label: 'Ring 4', color: 'bg-slate-500' },
+              ].map((r) => (
+                <span
+                  key={r.label}
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 bg-slate-50 rounded-lg border border-slate-200"
+                >
+                  <span className={`w-2.5 h-2.5 rounded-full ${r.color}`} />
+                  <span>{r.label}</span>
+                </span>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -277,13 +456,25 @@ export const OutletMap: React.FC<Props> = ({ onSelectOutletForCallPlan }) => {
                       {activeOutlet.lastOrder || '-'}
                     </span>
                   </div>
-                  <div className="flex justify-between">
+                  <div className="flex justify-between items-center">
                     <span className="text-slate-500">Koordinat:</span>
                     <span className="font-mono text-slate-600">
                       {activeOutlet.latitude?.toFixed(4)}, {activeOutlet.longitude?.toFixed(4)}
                     </span>
                   </div>
                 </div>
+
+                {activeOutlet.latitude && activeOutlet.longitude && (
+                  <a
+                    href={`https://www.google.com/maps/search/?api=1&query=${activeOutlet.latitude},${activeOutlet.longitude}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-white border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 text-indigo-700 text-xs font-semibold rounded-xl transition-colors"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    Buka di Google Maps
+                  </a>
+                )}
 
                 <p className="text-xs text-slate-600 leading-relaxed">{activeOutlet.alamat}</p>
               </div>

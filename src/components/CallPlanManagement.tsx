@@ -349,18 +349,26 @@ export const CallPlanManagement: React.FC = () => {
     return pool;
   }, [mappings, isManager, accessibleDepo]);
 
+  const wizardDepoOptions = useMemo(() => {
+    const bsp = wizardBasePool.map((m) => m.depoBsp);
+    const udn = wizardBasePool.map((m) => m.subDistUdn);
+    return Array.from(new Set([...bsp, ...udn].filter(Boolean))).sort();
+  }, [wizardBasePool]);
+  const wizardDepoFilteredPool = useMemo(() => {
+    if (wizardDepo === 'ALL') return wizardBasePool;
+    return wizardBasePool.filter((m) => m.depoBsp === wizardDepo || m.subDistUdn === wizardDepo);
+  }, [wizardBasePool, wizardDepo]);
   const wizardKabupatenOptions = useMemo(
-    () => Array.from(new Set(wizardBasePool.map((m) => m.kabupaten).filter(Boolean))).sort(),
-    [wizardBasePool]
+    () => Array.from(new Set(wizardDepoFilteredPool.map((m) => m.kabupaten).filter(Boolean))).sort(),
+    [wizardDepoFilteredPool]
   );
   const wizardKecamatanOptions = useMemo(() => {
-    const pool = wizardKabupaten === 'ALL' ? wizardBasePool : wizardBasePool.filter((m) => m.kabupaten === wizardKabupaten);
+    const pool =
+      wizardKabupaten === 'ALL'
+        ? wizardDepoFilteredPool
+        : wizardDepoFilteredPool.filter((m) => m.kabupaten === wizardKabupaten);
     return Array.from(new Set(pool.map((m) => m.kecamatan).filter(Boolean))).sort();
-  }, [wizardBasePool, wizardKabupaten]);
-  const wizardDepoOptions = useMemo(
-    () => Array.from(new Set(wizardBasePool.map((m) => m.depoBsp).filter(Boolean))).sort(),
-    [wizardBasePool]
-  );
+  }, [wizardDepoFilteredPool, wizardKabupaten]);
 
   const wizardAlreadyScheduledKeys = useMemo(
     () => new Set(callPlans.map((c) => `${c.namaMds.toLowerCase()}|${c.customerSoGroupAreaCode}|${c.visitDay}`)),
@@ -372,7 +380,7 @@ export const CallPlanManagement: React.FC = () => {
     let pool = wizardBasePool;
     if (wizardKabupaten !== 'ALL') pool = pool.filter((m) => m.kabupaten === wizardKabupaten);
     if (wizardKecamatan !== 'ALL') pool = pool.filter((m) => m.kecamatan === wizardKecamatan);
-    if (wizardDepo !== 'ALL') pool = pool.filter((m) => m.depoBsp === wizardDepo);
+    if (wizardDepo !== 'ALL') pool = pool.filter((m) => m.depoBsp === wizardDepo || m.subDistUdn === wizardDepo);
     if (wizardRing !== 'ALL') pool = pool.filter((m) => m.klasifikasiOutlet === wizardRing);
     if (wizardSearch.trim()) {
       const q = wizardSearch.trim().toLowerCase();

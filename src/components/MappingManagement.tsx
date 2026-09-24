@@ -5,6 +5,7 @@ import { generateCustomerSoGroupAreaCode } from '../services/outletClassificatio
 import { findCandidateMatches, CandidateMatch, calculateNameSimilarity } from '../services/fuzzyMatch';
 import { Tooltip } from './Tooltip';
 import { Toast, ToastState } from './Toast';
+import { MultiSelectDropdown } from './MultiSelectDropdown';
 import {
   Plus,
   Edit2,
@@ -48,12 +49,12 @@ export const MappingManagement: React.FC = () => {
 
   // Filters & Search
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterDepo, setFilterDepo] = useState('ALL');
-  const [filterRing, setFilterRing] = useState('ALL');
-  const [filterPosm, setFilterPosm] = useState('ALL');
-  const [filterMds, setFilterMds] = useState('ALL');
-  const [filterKabupaten, setFilterKabupaten] = useState('ALL');
-  const [filterKecamatan, setFilterKecamatan] = useState('ALL');
+  const [filterDepo, setFilterDepo] = useState<string[]>([]);
+  const [filterRing, setFilterRing] = useState<string[]>([]);
+  const [filterPosm, setFilterPosm] = useState<string[]>([]);
+  const [filterMds, setFilterMds] = useState<string[]>([]);
+  const [filterKabupaten, setFilterKabupaten] = useState<string[]>([]);
+  const [filterKecamatan, setFilterKecamatan] = useState<string[]>([]);
 
   // Modal Wizard State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -135,15 +136,21 @@ export const MappingManagement: React.FC = () => {
         if (!matchesBsp && !matchesUdn) return false;
       }
 
-      if (filterDepo !== 'ALL' && m.depoBsp !== filterDepo) return false;
-      if (filterRing !== 'ALL' && m.klasifikasiOutlet !== filterRing) return false;
-      if (filterMds !== 'ALL' && m.namaMds !== filterMds) return false;
-      if (filterKabupaten !== 'ALL' && m.kabupaten !== filterKabupaten) return false;
-      if (filterKecamatan !== 'ALL' && m.kecamatan !== filterKecamatan) return false;
+      if (filterDepo.length > 0 && !filterDepo.includes(m.depoBsp) && !filterDepo.includes(m.subDistUdn)) return false;
+      if (filterRing.length > 0 && !filterRing.includes(m.klasifikasiOutlet)) return false;
+      if (filterMds.length > 0 && !filterMds.includes(m.namaMds)) return false;
+      if (filterKabupaten.length > 0 && !filterKabupaten.includes(m.kabupaten)) return false;
+      if (filterKecamatan.length > 0 && !filterKecamatan.includes(m.kecamatan)) return false;
 
-      if (filterPosm === 'dishub' && !m.dishub) return false;
-      if (filterPosm === 'rak' && !m.rak50cm && !m.rak65cm && !m.rak75cm && !m.rakDuaSisi && !m.rakPack && !m.rakCustome) return false;
-      if (filterPosm === 'wow' && !m.displayWowAll && !m.displayWowHilo) return false;
+      if (filterPosm.length > 0) {
+        const hasDishub = filterPosm.includes('Memiliki Dishub') && m.dishub;
+        const hasRak =
+          filterPosm.includes('Memiliki Rak Display') &&
+          (m.rak50cm || m.rak65cm || m.rak75cm || m.rakDuaSisi || m.rakPack || m.rakCustome);
+        const hasWow =
+          filterPosm.includes('Memiliki Display Wow') && (m.displayWowAll || m.displayWowHilo);
+        if (!hasDishub && !hasRak && !hasWow) return false;
+      }
 
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
@@ -239,20 +246,37 @@ export const MappingManagement: React.FC = () => {
   }, [mappings, isManager, accessibleDepo]);
 
   const depoOptions = useMemo(() => {
-    return Array.from(new Set(accessRestrictedMappings.map((m) => m.depoBsp).filter(Boolean)));
+    const bsp = accessRestrictedMappings.map((m) => m.depoBsp);
+    const udn = accessRestrictedMappings.map((m) => m.subDistUdn);
+    return Array.from(new Set([...bsp, ...udn].filter(Boolean))).sort();
   }, [accessRestrictedMappings]);
+
+  // Cascading: Kabupaten options narrow when a Depo is selected (but not by
+  // Kabupaten itself, so picking one doesn't shrink its own option list).
+  const depoFilteredMappingsPool = useMemo(() => {
+    if (filterDepo.length === 0) return accessRestrictedMappings;
+    return accessRestrictedMappings.filter(
+      (m) => filterDepo.includes(m.depoBsp) || filterDepo.includes(m.subDistUdn)
+    );
+  }, [accessRestrictedMappings, filterDepo]);
 
   const kabupatenOptions = useMemo(() => {
-    return Array.from(new Set(accessRestrictedMappings.map((m) => m.kabupaten).filter(Boolean))).sort();
-  }, [accessRestrictedMappings]);
+    return Array.from(new Set(depoFilteredMappingsPool.map((m) => m.kabupaten).filter(Boolean))).sort();
+  }, [depoFilteredMappingsPool]);
 
+  // Cascading: Kecamatan options narrow further when a Kabupaten is also
+  // selected, on top of the Depo narrowing above.
   const kecamatanOptions = useMemo(() => {
-    return Array.from(new Set(accessRestrictedMappings.map((m) => m.kecamatan).filter(Boolean))).sort();
-  }, [accessRestrictedMappings]);
+    const pool =
+      filterKabupaten.length > 0
+        ? depoFilteredMappingsPool.filter((m) => filterKabupaten.includes(m.kabupaten))
+        : depoFilteredMappingsPool;
+    return Array.from(new Set(pool.map((m) => m.kecamatan).filter(Boolean))).sort();
+  }, [depoFilteredMappingsPool, filterKabupaten]);
 
   const mdsOptions = useMemo(() => {
-    if (!isManager) return Array.from(new Set(accessibleMds.map((m) => m.namaMds).filter(Boolean)));
-    return Array.from(new Set(mappings.map((m) => m.namaMds).filter(Boolean)));
+    if (!isManager) return Array.from(new Set(accessibleMds.map((m) => m.namaMds).filter(Boolean))).sort();
+    return Array.from(new Set(mappings.map((m) => m.namaMds).filter(Boolean))).sort();
   }, [mappings, isManager, accessibleMds]);
 
   // Wizard Step 1: base pool already restricted to the logged-in PIC's Depo access
@@ -279,23 +303,23 @@ export const MappingManagement: React.FC = () => {
 
   // Cascading filter dropdown options (Sub Dist -> Depo -> Kabupaten -> Kecamatan)
   const wizardSubDistOptions = useMemo(
-    () => Array.from(new Set(wizardBasePool.map((p) => p.subDist).filter(Boolean))),
+    () => Array.from(new Set(wizardBasePool.map((p) => p.subDist).filter(Boolean))).sort(),
     [wizardBasePool]
   );
   const wizardDepoOptions = useMemo(() => {
     const pool = wizardSubDist === 'ALL' ? wizardBasePool : wizardBasePool.filter((p) => p.subDist === wizardSubDist);
-    return Array.from(new Set(pool.map((p) => p.depo).filter(Boolean)));
+    return Array.from(new Set(pool.map((p) => p.depo).filter(Boolean))).sort();
   }, [wizardBasePool, wizardSubDist]);
   const wizardKabupatenOptions = useMemo(() => {
     let pool = wizardSubDist === 'ALL' ? wizardBasePool : wizardBasePool.filter((p) => p.subDist === wizardSubDist);
     pool = wizardDepo === 'ALL' ? pool : pool.filter((p) => p.depo === wizardDepo);
-    return Array.from(new Set(pool.map((p) => p.kabupaten).filter(Boolean)));
+    return Array.from(new Set(pool.map((p) => p.kabupaten).filter(Boolean))).sort();
   }, [wizardBasePool, wizardSubDist, wizardDepo]);
   const wizardKecamatanOptions = useMemo(() => {
     let pool = wizardSubDist === 'ALL' ? wizardBasePool : wizardBasePool.filter((p) => p.subDist === wizardSubDist);
     pool = wizardDepo === 'ALL' ? pool : pool.filter((p) => p.depo === wizardDepo);
     pool = wizardKabupaten === 'ALL' ? pool : pool.filter((p) => p.kabupaten === wizardKabupaten);
-    return Array.from(new Set(pool.map((p) => p.kecamatan).filter(Boolean)));
+    return Array.from(new Set(pool.map((p) => p.kecamatan).filter(Boolean))).sort();
   }, [wizardBasePool, wizardSubDist, wizardDepo, wizardKabupaten]);
 
   // Final Wizard Step 1 results: access + filters + search, capped for render performance
@@ -1114,90 +1138,57 @@ export const MappingManagement: React.FC = () => {
           </div>
 
           <div>
-            <select
-              value={filterDepo}
-              onChange={(e) => setFilterDepo(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
-            >
-              <option value="ALL">Semua Depo BSP ({depoOptions.length})</option>
-              {depoOptions.map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
-            </select>
+            <MultiSelectDropdown
+              label="Depo"
+              options={depoOptions}
+              selected={filterDepo}
+              onChange={setFilterDepo}
+            />
           </div>
 
           <div>
-            <select
-              value={filterKabupaten}
-              onChange={(e) => setFilterKabupaten(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
-            >
-              <option value="ALL">Semua Kabupaten</option>
-              {kabupatenOptions.map((k) => (
-                <option key={k} value={k}>
-                  {k}
-                </option>
-              ))}
-            </select>
+            <MultiSelectDropdown
+              label="Kabupaten"
+              options={kabupatenOptions}
+              selected={filterKabupaten}
+              onChange={setFilterKabupaten}
+            />
           </div>
 
           <div>
-            <select
-              value={filterKecamatan}
-              onChange={(e) => setFilterKecamatan(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
-            >
-              <option value="ALL">Semua Kecamatan</option>
-              {kecamatanOptions.map((k) => (
-                <option key={k} value={k}>
-                  {k}
-                </option>
-              ))}
-            </select>
+            <MultiSelectDropdown
+              label="Kecamatan"
+              options={kecamatanOptions}
+              selected={filterKecamatan}
+              onChange={setFilterKecamatan}
+            />
           </div>
 
           <div>
-            <select
-              value={filterRing}
-              onChange={(e) => setFilterRing(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
-            >
-              <option value="ALL">Semua Ring</option>
-              <option value="Ring 1">Ring 1</option>
-              <option value="Ring 2">Ring 2</option>
-              <option value="Ring 3">Ring 3</option>
-              <option value="Ring 4">Ring 4</option>
-            </select>
+            <MultiSelectDropdown
+              label="Ring"
+              options={['Ring 1', 'Ring 2', 'Ring 3', 'Ring 4']}
+              selected={filterRing}
+              onChange={setFilterRing}
+            />
           </div>
 
           <div>
-            <select
-              value={filterPosm}
-              onChange={(e) => setFilterPosm(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
-            >
-              <option value="ALL">Semua Status POSM</option>
-              <option value="dishub">Memiliki Dishub</option>
-              <option value="rak">Memiliki Rak Display</option>
-              <option value="wow">Memiliki Display Wow</option>
-            </select>
+            <MultiSelectDropdown
+              label="Status POSM"
+              options={['Memiliki Dishub', 'Memiliki Rak Display', 'Memiliki Display Wow']}
+              selected={filterPosm}
+              onChange={setFilterPosm}
+            />
           </div>
 
           <div>
-            <select
-              value={filterMds}
-              onChange={(e) => setFilterMds(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
-            >
-              <option value="ALL">Semua Petugas MDS</option>
-              {mdsOptions.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
+            <MultiSelectDropdown
+              label="MDS"
+              options={mdsOptions}
+              selected={filterMds}
+              onChange={setFilterMds}
+            />
           </div>
         </div>
       </div>
@@ -1283,8 +1274,22 @@ export const MappingManagement: React.FC = () => {
                       </td>
                       <td className="py-3 px-3 whitespace-nowrap">
                         <div className="font-bold text-slate-900">{m.customerSoGroupArea}</div>
-                        <div className="text-[11px] text-slate-400">
-                          {m.kecamatan}, {m.kabupaten}
+                        <div className="text-[11px] text-slate-400 flex items-center gap-1">
+                          <span>
+                            {m.kecamatan}, {m.kabupaten}
+                          </span>
+                          {m.latitude && m.longitude && (
+                            <a
+                              href={`https://www.google.com/maps/search/?api=1&query=${m.latitude},${m.longitude}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title="Buka lokasi di Google Maps"
+                              onClick={(e) => e.stopPropagation()}
+                              className="text-indigo-500 hover:text-indigo-700"
+                            >
+                              <MapPin className="w-3 h-3" />
+                            </a>
+                          )}
                         </div>
                       </td>
                       <td className="py-3 px-3 font-mono font-bold text-slate-900 whitespace-nowrap text-[11px]">

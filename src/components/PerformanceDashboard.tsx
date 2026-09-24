@@ -27,6 +27,7 @@ import {
   Sparkles,
   ExternalLink,
   RotateCw,
+  MapPin,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
@@ -227,6 +228,8 @@ export const PerformanceDashboard: React.FC<Props> = ({
     f12: number;
     f3: number;
     hasPerformanceData: boolean;
+    latitude?: number;
+    longitude?: number;
   }
 
   const mappedOutletRows = useMemo(() => {
@@ -301,6 +304,8 @@ export const PerformanceDashboard: React.FC<Props> = ({
         f12,
         f3,
         hasPerformanceData: sources.length > 0,
+        latitude: mapping.latitude,
+        longitude: mapping.longitude,
       };
     });
   }, [
@@ -328,14 +333,14 @@ export const PerformanceDashboard: React.FC<Props> = ({
   // Unique dropdown options
   const distOptions = useMemo(() => {
     const list = isManager ? performance.map((p) => p.dist) : accessibleDistributors;
-    return Array.from(new Set(list.filter(Boolean)));
+    return Array.from(new Set(list.filter(Boolean))).sort();
   }, [performance, isManager, accessibleDistributors]);
 
   const depoOptions = useMemo(() => {
     const subset =
       selectedDist.length > 0 ? performance.filter((p) => selectedDist.includes(p.dist)) : performance;
     const list = isManager ? subset.map((p) => p.depo) : accessibleDepo;
-    return Array.from(new Set(list.filter(Boolean)));
+    return Array.from(new Set(list.filter(Boolean))).sort();
   }, [performance, isManager, accessibleDepo, selectedDist]);
 
   // Base pool for Kabupaten/Kecamatan options: respects access + Dist + Depo,
@@ -831,8 +836,21 @@ export const PerformanceDashboard: React.FC<Props> = ({
                       </td>
                       <td className="py-2.5 px-3">
                         <div className="font-medium text-slate-700">{row.depo}</div>
-                        <div className="text-[11px] text-slate-400">
-                          {row.kabupaten} • {row.kecamatan}
+                        <div className="text-[11px] text-slate-400 flex items-center gap-1">
+                          <span>
+                            {row.kabupaten} • {row.kecamatan}
+                          </span>
+                          {row.latitude && row.longitude && (
+                            <a
+                              href={`https://www.google.com/maps/search/?api=1&query=${row.latitude},${row.longitude}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title="Open location in Google Maps"
+                              className="text-indigo-500 hover:text-indigo-700 shrink-0"
+                            >
+                              <MapPin className="w-3 h-3" />
+                            </a>
+                          )}
                         </div>
                       </td>
                       <td className="py-2.5 px-3 text-center">
@@ -1284,15 +1302,15 @@ export const PerformanceDashboard: React.FC<Props> = ({
 
         {/* Filter Controls Row */}
         <div className="pt-4 flex flex-col lg:flex-row gap-3">
-          {/* Quick Search — standalone, visually distinct from the filter group */}
-          <div className="relative lg:w-64 shrink-0">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+          {/* Quick Search — same padded-box treatment as the filter group so both sit flush */}
+          <div className="relative lg:w-64 shrink-0 bg-slate-50 border border-slate-100 rounded-xl p-2">
+            <Search className="w-4 h-4 text-slate-400 absolute left-5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               placeholder="Search outlet code/name..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+              className="w-full pl-8 pr-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
             />
           </div>
 
