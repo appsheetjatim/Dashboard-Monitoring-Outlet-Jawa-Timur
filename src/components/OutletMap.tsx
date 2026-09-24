@@ -3,6 +3,7 @@ import { useApp } from '../context/AppContext';
 import { OutletPerformance } from '../types';
 import L from 'leaflet';
 import { MapPin, Filter, Search, Layers, Store, ExternalLink } from 'lucide-react';
+import { MultiSelectDropdown } from './MultiSelectDropdown';
 
 interface Props {
   onSelectOutletForCallPlan?: (code: string) => void;
@@ -17,8 +18,8 @@ export const OutletMap: React.FC<Props> = ({ onSelectOutletForCallPlan }) => {
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
 
   // Filters
-  const [selectedRing, setSelectedRing] = useState<string>('ALL');
-  const [selectedDepo, setSelectedDepo] = useState<string>('ALL');
+  const [selectedRing, setSelectedRing] = useState<string[]>([]);
+  const [selectedDepo, setSelectedDepo] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeOutlet, setActiveOutlet] = useState<OutletPerformance | null>(null);
 
@@ -30,8 +31,8 @@ export const OutletMap: React.FC<Props> = ({ onSelectOutletForCallPlan }) => {
       // bisa melihat seluruh outlet se-Jawa Timur di peta. Terapkan pembatasan
       // Depo yang sama seperti Dashboard Performance & Mapping.
       if (!isManager && accessibleDepo.length > 0 && !accessibleDepo.includes(item.depo)) return false;
-      if (selectedRing !== 'ALL' && item.calculatedRing !== selectedRing) return false;
-      if (selectedDepo !== 'ALL' && item.depo !== selectedDepo) return false;
+      if (selectedRing.length > 0 && !selectedRing.includes(item.calculatedRing)) return false;
+      if (selectedDepo.length > 0 && !selectedDepo.includes(item.depo)) return false;
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         if (
@@ -197,32 +198,21 @@ export const OutletMap: React.FC<Props> = ({ onSelectOutletForCallPlan }) => {
           </div>
 
           <div>
-            <select
-              value={selectedRing}
-              onChange={(e) => setSelectedRing(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
-            >
-              <option value="ALL">Semua Ring Klasifikasi</option>
-              <option value="Ring 1">Ring 1 (Hijau)</option>
-              <option value="Ring 2">Ring 2 (Biru)</option>
-              <option value="Ring 3">Ring 3 (Kuning)</option>
-              <option value="Ring 4">Ring 4 (Abu-abu)</option>
-            </select>
+            <MultiSelectDropdown
+              label="Ring Klasifikasi"
+              options={['Ring 1', 'Ring 2', 'Ring 3', 'Ring 4']}
+              selected={selectedRing}
+              onChange={setSelectedRing}
+            />
           </div>
 
           <div>
-            <select
-              value={selectedDepo}
-              onChange={(e) => setSelectedDepo(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
-            >
-              <option value="ALL">Semua Depo ({depoOptions.length})</option>
-              {depoOptions.map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
-            </select>
+            <MultiSelectDropdown
+              label="Depo"
+              options={depoOptions}
+              selected={selectedDepo}
+              onChange={setSelectedDepo}
+            />
           </div>
         </div>
       </div>
