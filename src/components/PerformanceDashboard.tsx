@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { OutletPerformance, OutletMapping } from '../types';
 import { Tooltip } from './Tooltip';
+import { MultiSelectDropdown } from './MultiSelectDropdown';
 import {
   TrendingUp,
   TrendingDown,
@@ -18,6 +19,7 @@ import {
   Users,
   ChevronRight,
   ChevronDown,
+  ChevronUp,
   ArrowUpDown,
   Calendar,
   CheckCircle,
@@ -53,15 +55,18 @@ export const PerformanceDashboard: React.FC<Props> = ({
 
   // Filters
   const [selectedYear, setSelectedYear] = useState<'2024' | '2025' | '2026'>('2026');
-  const [selectedDist, setSelectedDist] = useState<string>('ALL');
-  const [selectedDepo, setSelectedDepo] = useState<string>('ALL');
-  const [selectedKabupaten, setSelectedKabupaten] = useState<string>('ALL');
-  const [selectedRing, setSelectedRing] = useState<string>('ALL');
+  const [selectedDist, setSelectedDist] = useState<string[]>([]);
+  const [selectedDepo, setSelectedDepo] = useState<string[]>([]);
+  const [selectedKabupaten, setSelectedKabupaten] = useState<string[]>([]);
+  const [selectedKecamatan, setSelectedKecamatan] = useState<string[]>([]);
+  const [selectedRing, setSelectedRing] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Sorting
   const [sortField, setSortField] = useState<keyof OutletPerformance>('omset2026');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [mappedSortField, setMappedSortField] = useState<keyof MappedOutletRow>('omset');
+  const [mappedSortDirection, setMappedSortDirection] = useState<'asc' | 'desc'>('desc');
 
   // Active view tab inside Dashboard
   const [activeSection, setActiveSection] = useState<
@@ -121,7 +126,7 @@ export const PerformanceDashboard: React.FC<Props> = ({
     setIsMappedSectionOpen(false);
     setExpandedUnmappedDepos(new Set());
     setUnmappedDepoPages({});
-  }, [selectedYear, selectedDist, selectedDepo, selectedKabupaten, selectedRing, searchQuery, sortField, sortDirection]);
+  }, [selectedYear, selectedDist, selectedDepo, selectedKabupaten, selectedKecamatan, selectedRing, searchQuery, sortField, sortDirection]);
 
   // Filter raw data based on permissions & UI filters
   const filteredData = useMemo(() => {
@@ -134,10 +139,11 @@ export const PerformanceDashboard: React.FC<Props> = ({
         if (!accessibleDepo.includes(item.depo)) return false;
       }
 
-      if (selectedDist !== 'ALL' && item.dist !== selectedDist) return false;
-      if (selectedDepo !== 'ALL' && item.depo !== selectedDepo) return false;
-      if (selectedKabupaten !== 'ALL' && item.kabupaten !== selectedKabupaten) return false;
-      if (selectedRing !== 'ALL' && item.calculatedRing !== selectedRing) return false;
+      if (selectedDist.length > 0 && !selectedDist.includes(item.dist)) return false;
+      if (selectedDepo.length > 0 && !selectedDepo.includes(item.depo)) return false;
+      if (selectedKabupaten.length > 0 && !selectedKabupaten.includes(item.kabupaten)) return false;
+      if (selectedKecamatan.length > 0 && !selectedKecamatan.includes(item.kecamatan)) return false;
+      if (selectedRing.length > 0 && !selectedRing.includes(item.calculatedRing)) return false;
 
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
@@ -157,6 +163,7 @@ export const PerformanceDashboard: React.FC<Props> = ({
     selectedDist,
     selectedDepo,
     selectedKabupaten,
+    selectedKecamatan,
     selectedRing,
     searchQuery,
   ]);
@@ -230,18 +237,24 @@ export const PerformanceDashboard: React.FC<Props> = ({
         (m) => accessibleDepo.includes(m.depoBsp) || accessibleDepo.includes(m.subDistUdn)
       );
     }
-    if (selectedDepo !== 'ALL') {
-      list = list.filter((m) => m.depoBsp === selectedDepo || m.subDistUdn === selectedDepo);
+    if (selectedDepo.length > 0) {
+      list = list.filter((m) => selectedDepo.includes(m.depoBsp) || selectedDepo.includes(m.subDistUdn));
     }
-    if (selectedKabupaten !== 'ALL') {
-      list = list.filter((m) => m.kabupaten === selectedKabupaten);
+    if (selectedKabupaten.length > 0) {
+      list = list.filter((m) => selectedKabupaten.includes(m.kabupaten));
     }
-    if (selectedRing !== 'ALL') {
-      list = list.filter((m) => m.klasifikasiOutlet === selectedRing);
+    if (selectedKecamatan.length > 0) {
+      list = list.filter((m) => selectedKecamatan.includes(m.kecamatan));
     }
-    if (selectedDist !== 'ALL') {
-      if (selectedDist === 'BSP') list = list.filter((m) => !!m.bspCode1);
-      else if (selectedDist === 'UDN') list = list.filter((m) => !!m.udnCode1);
+    if (selectedRing.length > 0) {
+      list = list.filter((m) => selectedRing.includes(m.klasifikasiOutlet));
+    }
+    if (selectedDist.length > 0) {
+      list = list.filter((m) => {
+        if (selectedDist.includes('BSP') && !!m.bspCode1) return true;
+        if (selectedDist.includes('UDN') && !!m.udnCode1) return true;
+        return false;
+      });
     }
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
@@ -265,10 +278,18 @@ export const PerformanceDashboard: React.FC<Props> = ({
       const f12 = sources.length > 0 ? Math.max(...sources.map((r) => r.fLast12m)) : 0;
       const f3 = sources.length > 0 ? Math.max(...sources.map((r) => r.f3)) : 0;
 
+      // Show BOTH depots when a mapped outlet spans both sides (BSP depot
+      // and UDN sub-dist can genuinely differ) — showing only one silently
+      // hid half the picture for dual-sided outlets.
+      const depoLabel =
+        mapping.depoBsp && mapping.subDistUdn && mapping.depoBsp !== mapping.subDistUdn
+          ? `${mapping.depoBsp} / ${mapping.subDistUdn}`
+          : mapping.depoBsp || mapping.subDistUdn;
+
       return {
         code: mapping.customerSoGroupAreaCode,
         name: mapping.customerSoGroupArea,
-        depo: mapping.depoBsp || mapping.subDistUdn,
+        depo: depoLabel,
         kabupaten: mapping.kabupaten,
         kecamatan: mapping.kecamatan,
         klasifikasi: mapping.klasifikasiOutlet,
@@ -289,6 +310,7 @@ export const PerformanceDashboard: React.FC<Props> = ({
     accessibleDepo,
     selectedDepo,
     selectedKabupaten,
+    selectedKecamatan,
     selectedRing,
     selectedDist,
     searchQuery,
@@ -310,14 +332,36 @@ export const PerformanceDashboard: React.FC<Props> = ({
   }, [performance, isManager, accessibleDistributors]);
 
   const depoOptions = useMemo(() => {
-    const subset = selectedDist === 'ALL' ? performance : performance.filter((p) => p.dist === selectedDist);
+    const subset =
+      selectedDist.length > 0 ? performance.filter((p) => selectedDist.includes(p.dist)) : performance;
     const list = isManager ? subset.map((p) => p.depo) : accessibleDepo;
     return Array.from(new Set(list.filter(Boolean)));
   }, [performance, isManager, accessibleDepo, selectedDist]);
 
+  // Base pool for Kabupaten/Kecamatan options: respects access + Dist + Depo,
+  // but deliberately NOT Kabupaten/Kecamatan themselves — otherwise picking
+  // one Kabupaten would shrink its own dropdown to just that one value,
+  // making it impossible to add more to a multi-select.
+  const locationOptionsPool = useMemo(() => {
+    return performance.filter((item) => {
+      if (!isManager && accessibleDepo.length > 0 && !accessibleDepo.includes(item.depo)) return false;
+      if (selectedDist.length > 0 && !selectedDist.includes(item.dist)) return false;
+      if (selectedDepo.length > 0 && !selectedDepo.includes(item.depo)) return false;
+      return true;
+    });
+  }, [performance, isManager, accessibleDepo, selectedDist, selectedDepo]);
+
   const kabupatenOptions = useMemo(() => {
-    return Array.from(new Set(filteredData.map((p) => p.kabupaten).filter(Boolean)));
-  }, [filteredData]);
+    return Array.from(new Set(locationOptionsPool.map((p) => p.kabupaten).filter(Boolean))).sort();
+  }, [locationOptionsPool]);
+
+  const kecamatanOptions = useMemo(() => {
+    const pool =
+      selectedKabupaten.length > 0
+        ? locationOptionsPool.filter((p) => selectedKabupaten.includes(p.kabupaten))
+        : locationOptionsPool;
+    return Array.from(new Set(pool.map((p) => p.kecamatan).filter(Boolean))).sort();
+  }, [locationOptionsPool, selectedKabupaten]);
 
   // KPIs
   const totalOmset = useMemo(() => {
@@ -337,6 +381,32 @@ export const PerformanceDashboard: React.FC<Props> = ({
   }, [filteredData, selectedYear]);
 
   const yoyGrowth = totalOmsetPrev > 0 ? ((totalOmset - totalOmsetPrev) / totalOmsetPrev) * 100 : 0;
+
+  // Portfolio-level Avg Sales (average of each outlet's Avg Sales for the
+  // selected year) + its YoY growth — shown alongside Total Sales so the
+  // headline number and the "per outlet" picture sit together.
+  const avgSalesTotal = useMemo(() => {
+    if (filteredData.length === 0) return 0;
+    const sum = filteredData.reduce((s, item) => {
+      if (selectedYear === '2024') return s + (item.avgSales2024 || 0);
+      if (selectedYear === '2025') return s + (item.avgSales2025 || 0);
+      return s + (item.avgSales2026 || 0);
+    }, 0);
+    return sum / filteredData.length;
+  }, [filteredData, selectedYear]);
+
+  const avgSalesTotalPrev = useMemo(() => {
+    if (filteredData.length === 0) return 0;
+    const sum = filteredData.reduce((s, item) => {
+      if (selectedYear === '2025') return s + (item.avgSales2024 || 0);
+      if (selectedYear === '2026') return s + (item.avgSales2025 || 0);
+      return s + (item.avgSales2024 || 0);
+    }, 0);
+    return sum / filteredData.length;
+  }, [filteredData, selectedYear]);
+
+  const avgSalesGrowth =
+    avgSalesTotalPrev > 0 ? ((avgSalesTotal - avgSalesTotalPrev) / avgSalesTotalPrev) * 100 : 0;
 
   const activeOutletCount = useMemo(() => {
     return filteredData.filter((i) => (selectedYear === '2026' ? i.f2026 > 0 : i.f2025 > 0)).length;
@@ -363,20 +433,42 @@ export const PerformanceDashboard: React.FC<Props> = ({
   // Ring Distribution breakdown
   const ringStats = useMemo(() => {
     const rings = ['Ring 1', 'Ring 2', 'Ring 3', 'Ring 4'] as const;
-    const grandTotal2026 = filteredData.reduce((sum, i) => sum + (i.omset2026 || 0), 0) || 1;
+
+    // Mapped outlets count once (their combined BSP+UDN figures) instead of
+    // as separate raw rows — otherwise a dual-sided outlet inflates its
+    // ring's outlet count and skews Line/RO. Unmapped outlets have no single
+    // code to combine into, so they're still counted individually per Depo.
+    type RingUnit = { ring: string; omset: number; sku: number };
+    const mappedUnits: RingUnit[] = mappedOutletRows.map((m) => ({
+      ring: m.klasifikasi,
+      omset: m.omset,
+      sku: m.sku,
+    }));
+    const unmappedUnits: RingUnit[] = filteredData
+      .filter((p) => !mappedCodes.has(p.kodeCustNfiGroup))
+      .map((p) => ({
+        ring: p.calculatedRing,
+        omset: p.omset2026 || 0,
+        sku: p.sku2026 || 0,
+      }));
+    const allUnits = [...mappedUnits, ...unmappedUnits];
+    const grandTotal2026 = allUnits.reduce((sum, i) => sum + i.omset, 0) || 1;
 
     return rings.map((ring) => {
-      const items = filteredData.filter((i) => i.calculatedRing === ring);
-      const ringOmset = items.reduce((sum, i) => sum + (i.omset2026 || 0), 0);
+      const items = allUnits.filter((i) => i.ring === ring);
+      const ringOmset = items.reduce((sum, i) => sum + i.omset, 0);
+      const ringSku = items.reduce((sum, i) => sum + i.sku, 0);
       const omsetPct = (ringOmset / grandTotal2026) * 100;
+      const lineRo = items.length > 0 ? ringSku / items.length : 0;
       return {
         ring,
         count: items.length,
         omset: ringOmset,
         omsetPct,
+        lineRo,
       };
     });
-  }, [filteredData]);
+  }, [filteredData, mappedOutletRows, mappedCodes]);
 
   // Pareto Table grouped per Depo
   const paretoPerDepo = useMemo(() => {
@@ -568,17 +660,61 @@ export const PerformanceDashboard: React.FC<Props> = ({
     return 'Rp ' + Math.round(val).toLocaleString('id-ID');
   };
 
+  // Compact currency format for narrow table cells — full "Rp 13.034.095"
+  // can overflow a column, so large values get abbreviated (e.g. "Rp 13.0Jt",
+  // "Rp 543.4rb"). Callers should still put the exact value in a title
+  // attribute for hover.
+  const formatRupiahCompact = (val: number) => {
+    const abs = Math.abs(val);
+    if (abs >= 1_000_000_000) return 'Rp ' + (val / 1_000_000_000).toFixed(1) + 'M';
+    if (abs >= 1_000_000) return 'Rp ' + (val / 1_000_000).toFixed(1) + 'Jt';
+    if (abs >= 1_000) return 'Rp ' + (val / 1_000).toFixed(1) + 'rb';
+    return 'Rp ' + Math.round(val).toLocaleString('id-ID');
+  };
+
   // Reusable table renderer for outlet detail rows (used by both the
   // "Outlet Termapping" section and each Depo's section under "Belum
   // Termapping"), each with its own independent pagination.
   // Table renderer for "Outlet Termapping" — one row per Mapping (combined
   // BSP+UDN metrics), separate from renderOutletDetailTable which still shows
   // raw per-distributor-code rows for "Belum Termapping".
+  const handleMappedSort = (field: keyof MappedOutletRow) => {
+    if (mappedSortField === field) {
+      setMappedSortDirection((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setMappedSortField(field);
+      setMappedSortDirection('desc');
+    }
+  };
+
+  const MappedSortIcon: React.FC<{ field: keyof MappedOutletRow }> = ({ field }) =>
+    mappedSortField !== field ? (
+      <ArrowUpDown className="w-3 h-3 inline ml-1 text-slate-300" />
+    ) : mappedSortDirection === 'asc' ? (
+      <ChevronUp className="w-3 h-3 inline ml-1 text-indigo-600" />
+    ) : (
+      <ChevronDown className="w-3 h-3 inline ml-1 text-indigo-600" />
+    );
+
   const renderMappedOutletTable = (
-    rows: MappedOutletRow[],
+    rowsIn: MappedOutletRow[],
     page: number,
     onPageChange: (p: number) => void
   ) => {
+    // Plain sort (not useMemo) — this function is a render helper, not a
+    // component, so it can't call hooks itself.
+    const rows = [...rowsIn].sort((a, b) => {
+      const av = a[mappedSortField];
+      const bv = b[mappedSortField];
+      if (typeof av === 'number' && typeof bv === 'number') {
+        return mappedSortDirection === 'asc' ? av - bv : bv - av;
+      }
+      const as = String(av).toLowerCase();
+      const bs = String(bv).toLowerCase();
+      if (as < bs) return mappedSortDirection === 'asc' ? -1 : 1;
+      if (as > bs) return mappedSortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
     const totalP = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
     const start = (page - 1) * PAGE_SIZE;
     const pageItems = rows.slice(start, start + PAGE_SIZE);
@@ -589,50 +725,84 @@ export const PerformanceDashboard: React.FC<Props> = ({
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200 text-slate-700 font-semibold">
-                <th className="py-3 px-3">Customer SO Group Area Code &amp; Nama</th>
-                <th className="py-3 px-3">Depo &amp; Wilayah</th>
-                <th className="py-3 px-3 text-center">
-                  Klasifikasi
+                <th
+                  className="py-3 px-3 cursor-pointer select-none hover:text-indigo-700"
+                  onClick={() => handleMappedSort('name')}
+                >
+                  Customer SO Group Area Code &amp; Name
+                  <MappedSortIcon field="name" />
+                </th>
+                <th className="py-3 px-3">Depot &amp; Region</th>
+                <th
+                  className="py-3 px-3 text-center cursor-pointer select-none hover:text-indigo-700"
+                  onClick={() => handleMappedSort('klasifikasi')}
+                >
+                  Classification
+                  <MappedSortIcon field="klasifikasi" />
                   <Tooltip
-                    title="Klasifikasi Ring"
-                    content="Dihitung otomatis: Ring 1 (Mapping), Ring 2 (Pareto/Produktif), Ring 3 (Avg Sales ≥ 100rb), Ring 4 (<100rb)"
+                    title="Ring Classification"
+                    content="Calculated automatically: Ring 1 (Mapping), Ring 2 (Pareto/Productive), Ring 3 (Avg Sales ≥ 100k), Ring 4 (<100k)"
                   />
                 </th>
-                <th className="py-3 px-3 text-right">
-                  Omset 2026
-                  <Tooltip title="Omset gabungan" content="Jumlah Omset 2026 dari sisi BSP + UDN" />
+                <th
+                  className="py-3 px-3 text-right cursor-pointer select-none hover:text-indigo-700"
+                  onClick={() => handleMappedSort('omset')}
+                >
+                  Sales 2026
+                  <MappedSortIcon field="omset" />
+                  <Tooltip title="Combined sales" content="Sum of 2026 sales from BSP + UDN" />
                 </th>
-                <th className="py-3 px-3 text-right">
+                <th
+                  className="py-3 px-3 text-right cursor-pointer select-none hover:text-indigo-700"
+                  onClick={() => handleMappedSort('avgSales')}
+                >
                   Avg Sales 2026
-                  <Tooltip title="Avg Sales gabungan" content="Jumlah Avg Sales 2026 dari sisi BSP + UDN" />
+                  <MappedSortIcon field="avgSales" />
+                  <Tooltip title="Combined Avg Sales" content="Sum of 2026 Avg Sales from BSP + UDN" />
                 </th>
-                <th className="py-3 px-3 text-center">
+                <th
+                  className="py-3 px-3 text-center cursor-pointer select-none hover:text-indigo-700"
+                  onClick={() => handleMappedSort('sku')}
+                >
                   SKU 2026
-                  <Tooltip title="SKU gabungan" content="Jumlah SKU 2026 dari sisi BSP + UDN" />
+                  <MappedSortIcon field="sku" />
+                  <Tooltip title="Combined SKU" content="Sum of 2026 SKU from BSP + UDN" />
                 </th>
-                <th className="py-3 px-3 text-center">
+                <th
+                  className="py-3 px-3 text-center cursor-pointer select-none hover:text-indigo-700"
+                  onClick={() => handleMappedSort('avgPa')}
+                >
                   PA 2026
+                  <MappedSortIcon field="avgPa" />
                   <Tooltip
-                    title="AVG PA & % PA gabungan"
-                    content="AVG PA dijumlahkan dari BSP + UDN. % PA dihitung ulang: total PA ÷ total SKU (bukan dijumlah)"
+                    title="Combined AVG PA & % PA"
+                    content="AVG PA is summed from BSP + UDN. % PA is recalculated: total PA ÷ total SKU (not summed)"
                   />
                 </th>
-                <th className="py-3 px-3 text-center">
+                <th
+                  className="py-3 px-3 text-center cursor-pointer select-none hover:text-indigo-700"
+                  onClick={() => handleMappedSort('f12')}
+                >
                   F12
-                  <Tooltip title="F Last 12M" content="Diambil nilai tertinggi antara sisi BSP dan UDN" />
+                  <MappedSortIcon field="f12" />
+                  <Tooltip title="F Last 12M" content="Takes the higher value between the BSP and UDN sides" />
                 </th>
-                <th className="py-3 px-3 text-center">
+                <th
+                  className="py-3 px-3 text-center cursor-pointer select-none hover:text-indigo-700"
+                  onClick={() => handleMappedSort('f3')}
+                >
                   F3
-                  <Tooltip title="F3" content="Diambil nilai tertinggi antara sisi BSP dan UDN" />
+                  <MappedSortIcon field="f3" />
+                  <Tooltip title="F3" content="Takes the higher value between the BSP and UDN sides" />
                 </th>
-                <th className="py-3 px-3 text-center">Aksi</th>
+                <th className="py-3 px-3 text-center">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {pageItems.length === 0 ? (
                 <tr>
                   <td colSpan={10} className="text-center py-8 text-slate-400">
-                    Tidak ada outlet.
+                    No outlets.
                   </td>
                 </tr>
               ) : (
@@ -655,7 +825,7 @@ export const PerformanceDashboard: React.FC<Props> = ({
                         <div className="text-[11px] text-slate-400 font-mono">{row.code}</div>
                         {!row.hasPerformanceData && (
                           <div className="text-[10px] text-amber-600 font-semibold mt-0.5">
-                            Data performa tidak ditemukan
+                            Performance data not found
                           </div>
                         )}
                       </td>
@@ -670,11 +840,11 @@ export const PerformanceDashboard: React.FC<Props> = ({
                           {row.klasifikasi}
                         </span>
                       </td>
-                      <td className="py-2.5 px-3 text-right font-bold text-slate-900">
-                        {row.hasPerformanceData ? formatRupiah(row.omset) : <span className="text-slate-300 font-normal">-</span>}
+                      <td className="py-2.5 px-3 text-right font-bold text-slate-900" title={row.hasPerformanceData ? formatRupiah(row.omset) : undefined}>
+                        {row.hasPerformanceData ? formatRupiahCompact(row.omset) : <span className="text-slate-300 font-normal">-</span>}
                       </td>
-                      <td className="py-2.5 px-3 text-right text-slate-700">
-                        {row.hasPerformanceData ? formatRupiah(row.avgSales) : <span className="text-slate-300">-</span>}
+                      <td className="py-2.5 px-3 text-right text-slate-700" title={row.hasPerformanceData ? formatRupiah(row.avgSales) : undefined}>
+                        {row.hasPerformanceData ? formatRupiahCompact(row.avgSales) : <span className="text-slate-300">-</span>}
                       </td>
                       <td className="py-2.5 px-3 text-center text-slate-800 font-medium">
                         {row.hasPerformanceData ? row.sku : <span className="text-slate-300">-</span>}
@@ -717,8 +887,8 @@ export const PerformanceDashboard: React.FC<Props> = ({
         {rows.length > 0 && (
           <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 text-xs text-slate-600">
             <span>
-              Menampilkan {start + 1}–{Math.min(page * PAGE_SIZE, rows.length)} dari{' '}
-              {rows.length.toLocaleString('id-ID')} outlet
+              Showing {start + 1}–{Math.min(page * PAGE_SIZE, rows.length)} of{' '}
+              {rows.length.toLocaleString('id-ID')} outlets
             </span>
             <div className="flex items-center gap-1.5">
               <button
@@ -726,17 +896,17 @@ export const PerformanceDashboard: React.FC<Props> = ({
                 disabled={page === 1}
                 className="px-2.5 py-1.5 rounded-lg border border-slate-200 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
               >
-                Sebelumnya
+                Previous
               </button>
               <span className="px-2 font-semibold text-slate-700">
-                Halaman {page} / {totalP}
+                Page {page} / {totalP}
               </span>
               <button
                 onClick={() => onPageChange(Math.min(totalP, page + 1))}
                 disabled={page === totalP}
                 className="px-2.5 py-1.5 rounded-lg border border-slate-200 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
               >
-                Berikutnya
+                Next
               </button>
             </div>
           </div>
@@ -745,11 +915,41 @@ export const PerformanceDashboard: React.FC<Props> = ({
     );
   };
 
+  const handleSort = (field: keyof OutletPerformance) => {
+    if (sortField === field) {
+      setSortDirection((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortField(field);
+      setSortDirection('desc');
+    }
+  };
+
+  const SortIcon: React.FC<{ field: keyof OutletPerformance }> = ({ field }) =>
+    sortField !== field ? (
+      <ArrowUpDown className="w-3 h-3 inline ml-1 text-slate-300" />
+    ) : sortDirection === 'asc' ? (
+      <ChevronUp className="w-3 h-3 inline ml-1 text-indigo-600" />
+    ) : (
+      <ChevronDown className="w-3 h-3 inline ml-1 text-indigo-600" />
+    );
+
   const renderOutletDetailTable = (
-    outlets: OutletPerformance[],
+    outletsIn: OutletPerformance[],
     page: number,
     onPageChange: (p: number) => void
   ) => {
+    const outlets = [...outletsIn].sort((a, b) => {
+      const av = a[sortField];
+      const bv = b[sortField];
+      if (typeof av === 'number' && typeof bv === 'number') {
+        return sortDirection === 'asc' ? av - bv : bv - av;
+      }
+      const as = String(av).toLowerCase();
+      const bs = String(bv).toLowerCase();
+      if (as < bs) return sortDirection === 'asc' ? -1 : 1;
+      if (as > bs) return sortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
     const totalP = Math.max(1, Math.ceil(outlets.length / PAGE_SIZE));
     const start = (page - 1) * PAGE_SIZE;
     const pageItems = outlets.slice(start, start + PAGE_SIZE);
@@ -760,38 +960,78 @@ export const PerformanceDashboard: React.FC<Props> = ({
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200 text-slate-700 font-semibold">
-                <th className="py-3 px-3">Kode &amp; Nama Outlet</th>
-                <th className="py-3 px-3">Depo &amp; Wilayah</th>
-                <th className="py-3 px-3 text-center">
-                  Klasifikasi
+                <th
+                  className="py-3 px-3 cursor-pointer select-none hover:text-indigo-700"
+                  onClick={() => handleSort('namaCustomerBaru')}
+                >
+                  Outlet Code &amp; Name
+                  <SortIcon field="namaCustomerBaru" />
+                </th>
+                <th className="py-3 px-3">Depot &amp; Region</th>
+                <th
+                  className="py-3 px-3 text-center cursor-pointer select-none hover:text-indigo-700"
+                  onClick={() => handleSort('calculatedRing')}
+                >
+                  Classification
+                  <SortIcon field="calculatedRing" />
                   <Tooltip
-                    title="Klasifikasi Ring"
-                    content="Dihitung otomatis: Ring 1 (Mapping), Ring 2 (Pareto/Produktif), Ring 3 (Avg Sales ≥ 100rb), Ring 4 (<100rb)"
+                    title="Ring Classification"
+                    content="Calculated automatically: Ring 1 (Mapping), Ring 2 (Pareto/Productive), Ring 3 (Avg Sales ≥ 100k), Ring 4 (<100k)"
                   />
                 </th>
-                <th className="py-3 px-3 text-right">Omset 2026</th>
-                <th className="py-3 px-3 text-right">Avg Sales 2026</th>
-                <th className="py-3 px-3 text-center">SKU 2026</th>
-                <th className="py-3 px-3 text-center">
+                <th
+                  className="py-3 px-3 text-right cursor-pointer select-none hover:text-indigo-700"
+                  onClick={() => handleSort('omset2026')}
+                >
+                  Sales 2026
+                  <SortIcon field="omset2026" />
+                </th>
+                <th
+                  className="py-3 px-3 text-right cursor-pointer select-none hover:text-indigo-700"
+                  onClick={() => handleSort('avgSales2026')}
+                >
+                  Avg Sales 2026
+                  <SortIcon field="avgSales2026" />
+                </th>
+                <th
+                  className="py-3 px-3 text-center cursor-pointer select-none hover:text-indigo-700"
+                  onClick={() => handleSort('sku2026')}
+                >
+                  SKU 2026
+                  <SortIcon field="sku2026" />
+                </th>
+                <th
+                  className="py-3 px-3 text-center cursor-pointer select-none hover:text-indigo-700"
+                  onClick={() => handleSort('avgPa2026')}
+                >
                   PA 2026
-                  <Tooltip title="AVG PA 2026" content="Rata-rata jumlah SKU aktif bertransaksi per bulan" />
+                  <SortIcon field="avgPa2026" />
+                  <Tooltip title="AVG PA 2026" content="Average number of active SKUs transacted per month." />
                 </th>
-                <th className="py-3 px-3 text-center">
+                <th
+                  className="py-3 px-3 text-center cursor-pointer select-none hover:text-indigo-700"
+                  onClick={() => handleSort('fLast12m')}
+                >
                   F12
-                  <Tooltip title="F Last 12M" content="Frekuensi bulan bertransaksi dalam 12 bulan terakhir" />
+                  <SortIcon field="fLast12m" />
+                  <Tooltip title="F Last 12M" content="Number of months with a transaction in the last 12 months." />
                 </th>
-                <th className="py-3 px-3 text-center">
+                <th
+                  className="py-3 px-3 text-center cursor-pointer select-none hover:text-indigo-700"
+                  onClick={() => handleSort('f3')}
+                >
                   F3
-                  <Tooltip title="F3" content="Frekuensi bulan bertransaksi dalam 3 bulan terakhir" />
+                  <SortIcon field="f3" />
+                  <Tooltip title="F3" content="Number of months with a transaction in the last 3 months." />
                 </th>
-                <th className="py-3 px-3 text-center">Aksi</th>
+                <th className="py-3 px-3 text-center">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {pageItems.length === 0 ? (
                 <tr>
                   <td colSpan={10} className="text-center py-8 text-slate-400">
-                    Tidak ada outlet.
+                    No outlets.
                   </td>
                 </tr>
               ) : (
@@ -824,11 +1064,11 @@ export const PerformanceDashboard: React.FC<Props> = ({
                           {outlet.calculatedRing}
                         </span>
                       </td>
-                      <td className="py-2.5 px-3 text-right font-bold text-slate-900">
-                        {formatRupiah(outlet.omset2026)}
+                      <td className="py-2.5 px-3 text-right font-bold text-slate-900" title={formatRupiah(outlet.omset2026)}>
+                        {formatRupiahCompact(outlet.omset2026)}
                       </td>
-                      <td className="py-2.5 px-3 text-right text-slate-700">
-                        {formatRupiah(outlet.avgSales2026)}
+                      <td className="py-2.5 px-3 text-right text-slate-700" title={formatRupiah(outlet.avgSales2026)}>
+                        {formatRupiahCompact(outlet.avgSales2026)}
                       </td>
                       <td className="py-2.5 px-3 text-center text-slate-800 font-medium">{outlet.sku2026}</td>
                       <td className="py-2.5 px-3 text-center text-indigo-600 font-semibold">{outlet.avgPa2026}</td>
@@ -856,8 +1096,8 @@ export const PerformanceDashboard: React.FC<Props> = ({
         {outlets.length > 0 && (
           <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 text-xs text-slate-600">
             <span>
-              Menampilkan {start + 1}–{Math.min(page * PAGE_SIZE, outlets.length)} dari{' '}
-              {outlets.length.toLocaleString('id-ID')} outlet
+              Showing {start + 1}–{Math.min(page * PAGE_SIZE, outlets.length)} of{' '}
+              {outlets.length.toLocaleString('id-ID')} outlets
             </span>
             <div className="flex items-center gap-1.5">
               <button
@@ -865,17 +1105,17 @@ export const PerformanceDashboard: React.FC<Props> = ({
                 disabled={page === 1}
                 className="px-2.5 py-1.5 rounded-lg border border-slate-200 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
               >
-                Sebelumnya
+                Previous
               </button>
               <span className="px-2 font-semibold text-slate-700">
-                Halaman {page} / {totalP}
+                Page {page} / {totalP}
               </span>
               <button
                 onClick={() => onPageChange(Math.min(totalP, page + 1))}
                 disabled={page === totalP}
                 className="px-2.5 py-1.5 rounded-lg border border-slate-200 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
               >
-                Berikutnya
+                Next
               </button>
             </div>
           </div>
@@ -902,9 +1142,9 @@ export const PerformanceDashboard: React.FC<Props> = ({
               <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
             )}
             <div>
-              <h3 className="font-bold text-sm text-slate-800">Outlet Termapping</h3>
+              <h3 className="font-bold text-sm text-slate-800">Mapped Outlets</h3>
               <p className="text-xs text-slate-500">
-                {mappedOutletRows.length.toLocaleString('id-ID')} outlet sudah ada di data Mapping
+                {mappedOutletRows.length.toLocaleString('id-ID')} outlets already in Mapping data
               </p>
             </div>
           </div>
@@ -918,15 +1158,15 @@ export const PerformanceDashboard: React.FC<Props> = ({
 
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
         <div className="p-4 border-b border-slate-100">
-          <h3 className="font-bold text-sm text-slate-800">Outlet Belum Termapping per Depo</h3>
+          <h3 className="font-bold text-sm text-slate-800">Unmapped Outlets by Depot</h3>
           <p className="text-xs text-slate-500">
-            {totalUnmappedCount.toLocaleString('id-ID')} outlet di {Object.keys(unmappedByDepo).length} Depo belum ada di data Mapping
+            {totalUnmappedCount.toLocaleString('id-ID')} outlets across {Object.keys(unmappedByDepo).length} depots not yet in Mapping data
           </p>
         </div>
         <div className="divide-y divide-slate-100">
           {Object.keys(unmappedByDepo).length === 0 ? (
             <div className="p-4 text-center text-xs text-slate-400">
-              Semua outlet pada filter saat ini sudah termapping.
+              All outlets under the current filter are already mapped.
             </div>
           ) : (
             Object.keys(unmappedByDepo)
@@ -950,7 +1190,7 @@ export const PerformanceDashboard: React.FC<Props> = ({
                         <span className="text-sm font-bold text-slate-900">{depoName}</span>
                       </div>
                       <span className="text-xs font-semibold px-2.5 py-1 bg-slate-100 text-slate-700 rounded-lg">
-                        {depoOutlets.length.toLocaleString('id-ID')} outlet
+                        {depoOutlets.length.toLocaleString('id-ID')} outlets
                       </span>
                     </button>
                     {isExpanded && (
@@ -978,9 +1218,9 @@ export const PerformanceDashboard: React.FC<Props> = ({
           <div className="w-16 h-16 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-500 mb-4">
             <FileSpreadsheet className="w-8 h-8" />
           </div>
-          <h2 className="text-base font-bold text-slate-900 mb-1">Belum Ada Data Performance</h2>
+          <h2 className="text-base font-bold text-slate-900 mb-1">No Performance Data Yet</h2>
           <p className="text-xs text-slate-500 max-w-sm mb-5">
-            Data outlet belum tersambung ke Google Sheets di sesi ini. Klik tombol di bawah untuk menyinkronkan data terbaru.
+            Outlet data isn't connected to Google Sheets in this session yet. Click the button below to sync the latest data.
           </p>
           <button
             onClick={syncWithGoogleSheets}
@@ -988,7 +1228,7 @@ export const PerformanceDashboard: React.FC<Props> = ({
             className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors flex items-center gap-2 disabled:opacity-60"
           >
             <RotateCw className={`w-4 h-4 ${syncStatus === 'syncing' ? 'animate-spin' : ''}`} />
-            {syncStatus === 'syncing' ? 'Menyinkronkan...' : 'Sambungkan & Sync Data'}
+            {syncStatus === 'syncing' ? 'Syncing...' : 'Connect & Sync Data'}
           </button>
         </div>
       ) : (
@@ -999,7 +1239,7 @@ export const PerformanceDashboard: React.FC<Props> = ({
           <div>
             <h2 className="text-lg font-bold text-slate-900">Dashboard Performance Outlet</h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Analisis Pareto per Depo, Klasifikasi Otomatis Ring 1–4, &amp; Deteksi Dorman
+              Pareto Analysis by Depot, Automatic Ring 1–4 Classification, &amp; Dormant Detection
             </p>
           </div>
 
@@ -1026,7 +1266,7 @@ export const PerformanceDashboard: React.FC<Props> = ({
               <button
                 onClick={() => handleExport('xlsx')}
                 className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-semibold rounded-xl border border-emerald-200 flex items-center gap-1.5 transition-colors"
-                title="Download data terfilter ke format Excel"
+                title="Download filtered data as Excel"
               >
                 <Download className="w-3.5 h-3.5" />
                 <span>Export Excel</span>
@@ -1049,80 +1289,45 @@ export const PerformanceDashboard: React.FC<Props> = ({
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
             <input
               type="text"
-              placeholder="Cari kode/nama outlet..."
+              placeholder="Search outlet code/name..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-9 pr-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
             />
           </div>
 
-          {/* Filter dropdowns — grouped together in one tinted container */}
-          <div className="flex-1 grid grid-cols-2 md:grid-cols-4 gap-2 bg-slate-50 border border-slate-100 rounded-xl p-2">
-          {/* Distributor Filter */}
-          <div>
-            <select
-              value={selectedDist}
-              onChange={(e) => {
-                setSelectedDist(e.target.value);
-                setSelectedDepo('ALL');
-              }}
-              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
-            >
-              <option value="ALL">Semua Distributor ({distOptions.length})</option>
-              {distOptions.map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Depo Filter */}
-          <div>
-            <select
-              value={selectedDepo}
-              onChange={(e) => setSelectedDepo(e.target.value)}
-              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
-            >
-              <option value="ALL">Semua Depo ({depoOptions.length})</option>
-              {depoOptions.map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Kabupaten Filter */}
-          <div>
-            <select
-              value={selectedKabupaten}
-              onChange={(e) => setSelectedKabupaten(e.target.value)}
-              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
-            >
-              <option value="ALL">Semua Kabupaten/Kota</option>
-              {kabupatenOptions.map((k) => (
-                <option key={k} value={k}>
-                  {k}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Ring Filter */}
-          <div>
-            <select
-              value={selectedRing}
-              onChange={(e) => setSelectedRing(e.target.value)}
-              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
-            >
-              <option value="ALL">Semua Ring Klasifikasi</option>
-              <option value="Ring 1">Ring 1 (Mapping Active)</option>
-              <option value="Ring 2">Ring 2 (Pareto ≤80% / Produktif)</option>
-              <option value="Ring 3">Ring 3 (Avg Sales ≥ 100rb)</option>
-              <option value="Ring 4">Ring 4 (Avg Sales &lt; 100rb)</option>
-            </select>
-          </div>
+          {/* Filter dropdowns — grouped together in one tinted container, each allows multiple selections */}
+          <div className="flex-1 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 bg-slate-50 border border-slate-100 rounded-xl p-2">
+            <MultiSelectDropdown
+              label="Distributors"
+              options={distOptions}
+              selected={selectedDist}
+              onChange={setSelectedDist}
+            />
+            <MultiSelectDropdown
+              label="Depots"
+              options={depoOptions}
+              selected={selectedDepo}
+              onChange={setSelectedDepo}
+            />
+            <MultiSelectDropdown
+              label="Regencies"
+              options={kabupatenOptions}
+              selected={selectedKabupaten}
+              onChange={setSelectedKabupaten}
+            />
+            <MultiSelectDropdown
+              label="Districts"
+              options={kecamatanOptions}
+              selected={selectedKecamatan}
+              onChange={setSelectedKecamatan}
+            />
+            <MultiSelectDropdown
+              label="Rings"
+              options={['Ring 1', 'Ring 2', 'Ring 3', 'Ring 4']}
+              selected={selectedRing}
+              onChange={setSelectedRing}
+            />
           </div>
         </div>
 
@@ -1130,7 +1335,7 @@ export const PerformanceDashboard: React.FC<Props> = ({
         {!isManager && (
           <div className="mt-3 px-3 py-1.5 bg-blue-50/70 border border-blue-200 text-blue-700 text-xs rounded-xl flex items-center justify-between">
             <span>
-              Akses Supervisor aktif: Data otomatis terkunci ke distributor tanggung jawab Anda (<strong>{currentUser?.namaPic}</strong>).
+              Supervisor access active: data is automatically locked to the distributors you're responsible for (<strong>{currentUser?.namaPic}</strong>).
             </span>
             <span className="text-[11px] font-semibold text-blue-800 uppercase tracking-wider">
               {accessibleDepo.join(', ')}
@@ -1141,18 +1346,21 @@ export const PerformanceDashboard: React.FC<Props> = ({
 
       {/* KPI Cards Row */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        {/* Total Omset */}
+        {/* Total Sales */}
         <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500">Total Omset</span>
+            <span className="text-xs font-semibold text-slate-500">Total Sales</span>
             <Tooltip
-              title="Total Omset"
-              content="Akumulasi omset seluruh outlet pada tahun terpilih."
+              title="Total Sales"
+              content="Total sales across all outlets for the selected year."
             />
           </div>
           <div className="mt-2">
-            <p className="text-base lg:text-lg font-bold text-slate-900 leading-tight">
-              {formatRupiah(totalOmset)}
+            <p
+              className="text-base lg:text-lg font-bold text-slate-900 leading-tight"
+              title={formatRupiah(totalOmset)}
+            >
+              {formatRupiahCompact(totalOmset)}
             </p>
             <div className="mt-1 flex items-center gap-1 text-[11px]">
               {yoyGrowth >= 0 ? (
@@ -1165,16 +1373,25 @@ export const PerformanceDashboard: React.FC<Props> = ({
                 </span>
               )}
             </div>
+            <div className="mt-1.5 pt-1.5 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400">
+              <span title={formatRupiah(avgSalesTotal)}>
+                Avg Sales: <span className="text-slate-600 font-semibold">{formatRupiahCompact(avgSalesTotal)}</span>
+              </span>
+              <span className={avgSalesGrowth >= 0 ? 'text-emerald-600 font-semibold' : 'text-rose-600 font-semibold'}>
+                {avgSalesGrowth >= 0 ? '+' : ''}
+                {avgSalesGrowth.toFixed(1)}%
+              </span>
+            </div>
           </div>
         </div>
 
-        {/* Outlet Aktif */}
+        {/* Active Outlets */}
         <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500">Outlet Aktif</span>
+            <span className="text-xs font-semibold text-slate-500">Active Outlets</span>
             <Tooltip
-              title="Frekuensi Transaksi"
-              content="Outlet yang memiliki frekuensi bertransaksi F > 0 dalam tahun terpilih."
+              title="Transaction Frequency"
+              content="Outlets with a transaction frequency of F > 0 in the selected year."
             />
           </div>
           <div className="mt-2">
@@ -1184,62 +1401,62 @@ export const PerformanceDashboard: React.FC<Props> = ({
             </p>
             <p className="text-[11px] text-slate-500 mt-1">
               {filteredData.length > 0
-                ? `${Math.round((activeOutletCount / filteredData.length) * 100)}% aktif berbelanja`
+                ? `${Math.round((activeOutletCount / filteredData.length) * 100)}% actively purchasing`
                 : '-'}
             </p>
           </div>
         </div>
 
-        {/* Rata-rata SKU */}
+        {/* Line/RO */}
         <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500">Rata-rata SKU</span>
+            <span className="text-xs font-semibold text-slate-500">Line/RO</span>
             <Tooltip
-              title="Rata-rata SKU"
-              content="Rata-rata jumlah SKU yang dibeli per toko per tahun."
+              title="Line/RO"
+              content="Average number of SKUs purchased per outlet per year."
             />
           </div>
           <div className="mt-2">
             <p className="text-base lg:text-lg font-bold text-slate-900 leading-tight">
               {avgSku}{' '}
-              <span className="text-xs font-normal text-slate-400">item/toko</span>
+              <span className="text-xs font-normal text-slate-400">items/outlet</span>
             </p>
-            <p className="text-[11px] text-slate-500 mt-1">Kedalaman varian produk</p>
+            <p className="text-[11px] text-slate-500 mt-1">Product range depth</p>
           </div>
         </div>
 
         {/* AVG PA */}
         <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500">AVG PA (Produk Aktif)</span>
+            <span className="text-xs font-semibold text-slate-500">AVG PA (Active Products)</span>
             <Tooltip
-              title="AVG PA (Produk Aktif)"
-              content="Rata-rata jumlah SKU/item aktif bertransaksi per toko per bulan."
+              title="AVG PA (Active Products)"
+              content="Average number of active SKUs/items transacted per outlet per month."
             />
           </div>
           <div className="mt-2">
             <p className="text-base lg:text-lg font-bold text-indigo-600 leading-tight">
               {avgPa}{' '}
-              <span className="text-xs font-normal text-slate-400">item/bln</span>
+              <span className="text-xs font-normal text-slate-400">items/mo</span>
             </p>
-            <p className="text-[11px] text-slate-500 mt-1">Keaktifan repeat purchase</p>
+            <p className="text-[11px] text-slate-500 mt-1">Repeat purchase activity</p>
           </div>
         </div>
 
         {/* Avg Sales */}
         <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500">Avg Sales / Toko</span>
+            <span className="text-xs font-semibold text-slate-500">Avg Sales / Outlet</span>
             <Tooltip
               title="Avg Sales"
-              content="Rata-rata omset per toko per bulan (bukan omset total)."
+              content="Average sales per outlet per month (not total sales)."
             />
           </div>
           <div className="mt-2">
-            <p className="text-base lg:text-lg font-bold text-slate-900 leading-tight">
-              {formatRupiah(avgSalesPerStore)}
+            <p className="text-base lg:text-lg font-bold text-slate-900 leading-tight" title={formatRupiah(avgSalesPerStore)}>
+              {formatRupiahCompact(avgSalesPerStore)}
             </p>
-            <p className="text-[11px] text-slate-500 mt-1">Omset rata-rata bulanan</p>
+            <p className="text-[11px] text-slate-500 mt-1">Average monthly sales</p>
           </div>
         </div>
 
@@ -1252,19 +1469,19 @@ export const PerformanceDashboard: React.FC<Props> = ({
           }`}
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-rose-700">Perlu Perhatian</span>
+            <span className="text-xs font-bold text-rose-700">Needs Attention</span>
             <AlertTriangle className="w-4 h-4 text-rose-600" />
           </div>
           <div className="mt-2">
             <p className="text-base lg:text-lg font-bold text-rose-800 leading-tight">
               {watchlistItems.length}{' '}
-              <span className="text-xs font-normal text-rose-600">outlet</span>
+              <span className="text-xs font-normal text-rose-600">outlets</span>
             </p>
             <button
               onClick={() => setActiveSection('watchlist')}
               className="mt-1 text-[11px] font-semibold text-rose-700 hover:text-rose-900 hover:underline flex items-center gap-0.5"
             >
-              Lihat Watchlist <ChevronRight className="w-3 h-3" />
+              View Watchlist <ChevronRight className="w-3 h-3" />
             </button>
           </div>
         </div>
@@ -1276,14 +1493,14 @@ export const PerformanceDashboard: React.FC<Props> = ({
           <div>
             <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
               <Award className="w-4 h-4 text-indigo-600" />
-              <span>Distribusi Outlet &amp; Kontribusi Omset per Ring Klasifikasi</span>
+              <span>Outlet Distribution &amp; Sales Contribution by Ring Classification</span>
               <Tooltip
-                title="Aturan Klasifikasi Otomatis"
-                content="Ring 1: Mapping Active. Ring 2: Pareto ≤80% ATAU Aktif & Produktif (PA≥40% & SKU≥Line/RO Depo). Ring 3: Avg Sales ≥ 100rb. Ring 4: Avg Sales < 100rb."
+                title="Automatic Classification Rules"
+                content="Ring 1: Mapping Active. Ring 2: Pareto ≤80% OR Active & Productive (PA≥40% & SKU≥Depot Line/RO). Ring 3: Avg Sales ≥ 100k. Ring 4: Avg Sales < 100k. Mapped outlets are counted once as a single combined code."
               />
             </h3>
             <p className="text-xs text-slate-500">
-              Evaluasi struktur basis outlet dan ketergantungan pendapatan
+              Outlet base structure and revenue concentration by ring
             </p>
           </div>
         </div>
@@ -1320,20 +1537,24 @@ export const PerformanceDashboard: React.FC<Props> = ({
                     {item.ring}
                   </span>
                   <span className="text-xs font-bold text-slate-700">
-                    {item.omsetPct.toFixed(1)}% Omset
+                    {item.omsetPct.toFixed(1)}% Sales
                   </span>
                 </div>
 
                 <div className="space-y-1">
                   <div className="flex justify-between items-baseline">
-                    <span className="text-xs text-slate-500">Jumlah Toko:</span>
-                    <span className="text-xs font-bold text-slate-800">{item.count} outlet</span>
+                    <span className="text-xs text-slate-500">Outlet Count:</span>
+                    <span className="text-xs font-bold text-slate-800">{item.count} outlets</span>
                   </div>
                   <div className="flex justify-between items-baseline">
-                    <span className="text-xs text-slate-500">Kontribusi:</span>
+                    <span className="text-xs text-slate-500">Contribution:</span>
                     <span className="text-xs font-bold text-slate-900">
-                      {formatRupiah(item.omset)}
+                      {formatRupiahCompact(item.omset)}
                     </span>
+                  </div>
+                  <div className="flex justify-between items-baseline">
+                    <span className="text-xs text-slate-500">Line/RO:</span>
+                    <span className="text-xs font-bold text-slate-800">{item.lineRo.toFixed(1)}</span>
                   </div>
                 </div>
 
@@ -1355,16 +1576,16 @@ export const PerformanceDashboard: React.FC<Props> = ({
       {/* Sub-Navigation Tabs inside Performance */}
       <div className="flex flex-wrap items-center gap-1.5 p-1.5 bg-slate-100 rounded-2xl border border-slate-200 max-w-full overflow-x-auto">
         {[
-          { id: 'overview', label: 'Tabel Detail Outlet' },
-          { id: 'pareto', label: 'Tabel Pareto per Depo (80/20)' },
+          { id: 'overview', label: 'Outlet Detail Table' },
+          { id: 'pareto', label: 'Pareto Table by Depot (80/20)' },
           { id: 'gainers', label: 'Top Gainer & Decliner' },
           { id: 'coverage', label: 'Coverage MDS vs Call Plan' },
           {
             id: 'watchlist',
-            label: `Watchlist Dorman (${watchlistItems.length})`,
+            label: `Dormant Watchlist (${watchlistItems.length})`,
             alert: watchlistItems.length > 0,
           },
-          { id: 'mds_leaderboard', label: 'Ranking Performa MDS' },
+          { id: 'mds_leaderboard', label: 'MDS Performance Ranking' },
         ].map((tab) => (
           <button
             key={tab.id}
@@ -1392,28 +1613,28 @@ export const PerformanceDashboard: React.FC<Props> = ({
           <div className="bg-amber-50/80 border border-amber-200 p-4 rounded-2xl text-xs text-amber-900 flex items-start gap-2.5">
             <Sparkles className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
             <div>
-              <strong className="font-bold">Prinsip Analisis Pareto (Aturan Per Depo):</strong>
+              <strong className="font-bold">Pareto Analysis Principle (Per-Depot Rule):</strong>
               <p className="mt-0.5 text-amber-800 leading-relaxed">
-                % Kontribusi dan % Kumulatif dihitung ulang per Depo dengan mengurutkan omset outlet dari terbesar ke terkecil. Baris yang disorot kuning menandai batas kumulatif 80% (Core Pareto Outlets yang menghasilkan 80% omset depo).
+                % Contribution and % Cumulative are recalculated per Depot, sorting outlet sales from highest to lowest. Rows highlighted in yellow mark the 80% cumulative threshold (Core Pareto Outlets generating 80% of the depot's sales).
               </p>
             </div>
           </div>
 
           <div className="flex items-center justify-between">
-            <span className="text-xs text-slate-500">{Object.keys(paretoPerDepo).length} Depo</span>
+            <span className="text-xs text-slate-500">{Object.keys(paretoPerDepo).length} Depots</span>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setExpandedDepos(new Set(Object.keys(paretoPerDepo)))}
                 className="text-xs text-indigo-600 hover:underline font-semibold"
               >
-                Buka Semua
+                Expand All
               </button>
               <span className="text-slate-300">|</span>
               <button
                 onClick={() => setExpandedDepos(new Set())}
                 className="text-xs text-indigo-600 hover:underline font-semibold"
               >
-                Tutup Semua
+                Collapse All
               </button>
             </div>
           </div>
@@ -1441,13 +1662,13 @@ export const PerformanceDashboard: React.FC<Props> = ({
                     )}
                     <div>
                       <h4 className="font-bold text-sm text-slate-900">{depoName}</h4>
-                      <p className="text-xs text-slate-500">
-                        Total Omset Depo: <strong>{formatRupiah(depoTotal)}</strong> ({depoOutlets.length} outlet)
+                      <p className="text-xs text-slate-500" title={formatRupiah(depoTotal)}>
+                        Depot Total Sales: <strong>{formatRupiahCompact(depoTotal)}</strong> ({depoOutlets.length} outlets)
                       </p>
                     </div>
                   </div>
                   <span className="text-xs font-semibold px-2.5 py-1 bg-amber-100 text-amber-800 rounded-lg self-start sm:self-auto">
-                    {depoOutlets.filter((o) => o.isPareto80).length} Outlet Pareto (≤80%)
+                    {depoOutlets.filter((o) => o.isPareto80).length} Pareto Outlets (≤80%)
                   </span>
                 </button>
 
@@ -1457,12 +1678,12 @@ export const PerformanceDashboard: React.FC<Props> = ({
                       <thead>
                         <tr className="bg-slate-100/70 border-b border-slate-200 text-slate-600 font-semibold">
                           <th className="py-2.5 px-3 w-12 text-center">Rank</th>
-                          <th className="py-2.5 px-3">Kode &amp; Nama Outlet</th>
-                          <th className="py-2.5 px-3 text-center">Klasifikasi</th>
-                          <th className="py-2.5 px-3 text-right">Omset 2026</th>
-                          <th className="py-2.5 px-3 text-right">% Kontribusi</th>
-                          <th className="py-2.5 px-3 text-right">% Kumulatif</th>
-                          <th className="py-2.5 px-3 text-center">Status Pareto</th>
+                          <th className="py-2.5 px-3">Outlet Code &amp; Name</th>
+                          <th className="py-2.5 px-3 text-center">Classification</th>
+                          <th className="py-2.5 px-3 text-right">Sales 2026</th>
+                          <th className="py-2.5 px-3 text-right">% Contribution</th>
+                          <th className="py-2.5 px-3 text-right">% Cumulative</th>
+                          <th className="py-2.5 px-3 text-center">Pareto Status</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -1496,8 +1717,8 @@ export const PerformanceDashboard: React.FC<Props> = ({
                                   {outlet.calculatedRing}
                                 </span>
                               </td>
-                              <td className="py-2 px-3 text-right font-bold text-slate-900">
-                                {formatRupiah(outlet.omset2026)}
+                              <td className="py-2 px-3 text-right font-bold text-slate-900" title={formatRupiah(outlet.omset2026)}>
+                                {formatRupiahCompact(outlet.omset2026)}
                               </td>
                               <td className="py-2 px-3 text-right text-slate-700">
                                 {outlet.kontribusi.toFixed(2)}%
@@ -1537,7 +1758,7 @@ export const PerformanceDashboard: React.FC<Props> = ({
                 <TrendingUp className="w-5 h-5 text-emerald-600" />
                 <h4 className="font-bold text-sm text-slate-900">Top 10 Gainer (% Growth Sales)</h4>
               </div>
-              <span className="text-xs text-emerald-700 font-semibold">Tahun 2026 vs 2025</span>
+              <span className="text-xs text-emerald-700 font-semibold">2026 vs 2025</span>
             </div>
             <div className="divide-y divide-slate-100">
               {topGainers.map((item, idx) => (
@@ -1557,8 +1778,8 @@ export const PerformanceDashboard: React.FC<Props> = ({
                     <span className="text-xs font-bold text-emerald-600 block">
                       +{item.grAvgSales.toFixed(1)}%
                     </span>
-                    <span className="text-[11px] text-slate-500">
-                      {formatRupiah(item.omset2026)}
+                    <span className="text-[11px] text-slate-500" title={formatRupiah(item.omset2026)}>
+                      {formatRupiahCompact(item.omset2026)}
                     </span>
                   </div>
                 </div>
@@ -1573,7 +1794,7 @@ export const PerformanceDashboard: React.FC<Props> = ({
                 <TrendingDown className="w-5 h-5 text-rose-600" />
                 <h4 className="font-bold text-sm text-slate-900">Top 10 Decliner (% Growth Sales)</h4>
               </div>
-              <span className="text-xs text-rose-700 font-semibold">Tahun 2026 vs 2025</span>
+              <span className="text-xs text-rose-700 font-semibold">2026 vs 2025</span>
             </div>
             <div className="divide-y divide-slate-100">
               {topDecliners.map((item, idx) => (
@@ -1593,8 +1814,8 @@ export const PerformanceDashboard: React.FC<Props> = ({
                     <span className="text-xs font-bold text-rose-600 block">
                       {item.grAvgSales.toFixed(1)}%
                     </span>
-                    <span className="text-[11px] text-slate-500">
-                      {formatRupiah(item.omset2026)}
+                    <span className="text-[11px] text-slate-500" title={formatRupiah(item.omset2026)}>
+                      {formatRupiahCompact(item.omset2026)}
                     </span>
                   </div>
                 </div>
@@ -1613,11 +1834,11 @@ export const PerformanceDashboard: React.FC<Props> = ({
                 Coverage MDS vs Call Plan
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Join Performance + Call Plan: menandai outlet yang dijadwalkan tetapi LAST ORDER sudah lama (&gt;2 bulan) atau omset minim.
+                Joins Performance + Call Plan: flags outlets that are scheduled but whose LAST ORDER is old (&gt;2 months) or whose sales are minimal.
               </p>
             </div>
             <span className="text-xs font-semibold px-3 py-1 bg-indigo-50 text-indigo-700 rounded-xl">
-              {coverageData.filter((c) => c.isScheduled).length} Outlet Tercover Jadwal
+              {coverageData.filter((c) => c.isScheduled).length} Outlets Covered by Schedule
             </span>
           </div>
 
@@ -1625,14 +1846,14 @@ export const PerformanceDashboard: React.FC<Props> = ({
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
-                  <th className="py-3 px-3">Kode &amp; Nama Toko</th>
-                  <th className="py-3 px-3">Depo</th>
+                  <th className="py-3 px-3">Store Code &amp; Name</th>
+                  <th className="py-3 px-3">Depot</th>
                   <th className="py-3 px-3 text-center">Ring</th>
-                  <th className="py-3 px-3 text-center">MDS Ditugaskan</th>
-                  <th className="py-3 px-3 text-center">Status Call Plan</th>
-                  <th className="py-3 px-3 text-right">Omset 2026</th>
+                  <th className="py-3 px-3 text-center">Assigned MDS</th>
+                  <th className="py-3 px-3 text-center">Call Plan Status</th>
+                  <th className="py-3 px-3 text-right">Sales 2026</th>
                   <th className="py-3 px-3 text-center">Last Order</th>
-                  <th className="py-3 px-3 text-center">Evaluasi Kunjungan</th>
+                  <th className="py-3 px-3 text-center">Visit Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -1654,22 +1875,22 @@ export const PerformanceDashboard: React.FC<Props> = ({
                           {item.assignedMds}
                         </span>
                       ) : (
-                        <span className="text-slate-400 italic">Belum Ada</span>
+                        <span className="text-slate-400 italic">Not Yet Assigned</span>
                       )}
                     </td>
                     <td className="py-2.5 px-3 text-center">
                       {item.isScheduled ? (
                         <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
-                          <CheckCircle className="w-3 h-3" /> Terjadwal
+                          <CheckCircle className="w-3 h-3" /> Scheduled
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
-                          <Clock className="w-3 h-3" /> Belum Dijadwal
+                          <Clock className="w-3 h-3" /> Not Yet Scheduled
                         </span>
                       )}
                     </td>
-                    <td className="py-2.5 px-3 text-right font-bold text-slate-900">
-                      {formatRupiah(item.omset2026)}
+                    <td className="py-2.5 px-3 text-right font-bold text-slate-900" title={formatRupiah(item.omset2026)}>
+                      {formatRupiahCompact(item.omset2026)}
                     </td>
                     <td className="py-2.5 px-3 text-center whitespace-nowrap text-slate-600">
                       {item.lastOrder}
@@ -1677,7 +1898,7 @@ export const PerformanceDashboard: React.FC<Props> = ({
                     <td className="py-2.5 px-3 text-center">
                       {item.isInactiveWarning ? (
                         <span className="text-[10px] font-bold px-2 py-0.5 bg-rose-100 text-rose-800 rounded-full inline-block">
-                          Dijadwalkan tapi Dorman / Omset Minim!
+                          Scheduled but Dormant / Minimal Sales!
                         </span>
                       ) : item.isScheduled ? (
                         <span className="text-[10px] text-emerald-700 font-medium">Optimal</span>
@@ -1686,7 +1907,7 @@ export const PerformanceDashboard: React.FC<Props> = ({
                           onClick={() => onNavigateToCallPlan && onNavigateToCallPlan(item.kodeCustNfiGroup)}
                           className="text-[11px] text-indigo-600 hover:underline font-semibold"
                         >
-                          + Tambah Call Plan
+                          + Add Call Plan
                         </button>
                       )}
                     </td>
@@ -1699,9 +1920,9 @@ export const PerformanceDashboard: React.FC<Props> = ({
           {coverageData.length > 0 && (
             <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 text-xs text-slate-600">
               <span>
-                Menampilkan {(coveragePage - 1) * PAGE_SIZE + 1}
-                –{Math.min(coveragePage * PAGE_SIZE, coverageData.length)} dari{' '}
-                {coverageData.length.toLocaleString('id-ID')} outlet
+                Showing {(coveragePage - 1) * PAGE_SIZE + 1}
+                –{Math.min(coveragePage * PAGE_SIZE, coverageData.length)} of{' '}
+                {coverageData.length.toLocaleString('id-ID')} outlets
               </span>
               <div className="flex items-center gap-1.5">
                 <button
@@ -1709,17 +1930,17 @@ export const PerformanceDashboard: React.FC<Props> = ({
                   disabled={coveragePage === 1}
                   className="px-2.5 py-1.5 rounded-lg border border-slate-200 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
                 >
-                  Sebelumnya
+                  Previous
                 </button>
                 <span className="px-2 font-semibold text-slate-700">
-                  Halaman {coveragePage} / {coverageTotalPages}
+                  Page {coveragePage} / {coverageTotalPages}
                 </span>
                 <button
                   onClick={() => setCoveragePage((p) => Math.min(coverageTotalPages, p + 1))}
                   disabled={coveragePage === coverageTotalPages}
                   className="px-2.5 py-1.5 rounded-lg border border-slate-200 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
                 >
-                  Berikutnya
+                  Next
                 </button>
               </div>
             </div>
@@ -1734,10 +1955,10 @@ export const PerformanceDashboard: React.FC<Props> = ({
             <div>
               <h3 className="font-bold text-sm text-rose-900 flex items-center gap-2">
                 <AlertTriangle className="w-4 h-4 text-rose-600" />
-                <span>Watchlist Outlet Dorman &amp; Berisiko Churn ({watchlistItems.length} Outlet)</span>
+                <span>Dormant &amp; Churn Risk Watchlist ({watchlistItems.length} Outlets)</span>
               </h3>
               <p className="text-xs text-rose-700 mt-0.5">
-                Kriteria: Last Order &gt;2 bulan (badge merah) atau klasifikasi Ring turun dibanding bulan sebelumnya (badge kuning).
+                Criteria: Last Order &gt;2 months (red badge) or Ring classification dropped vs. the previous month (yellow badge).
               </p>
             </div>
           </div>
@@ -1745,7 +1966,7 @@ export const PerformanceDashboard: React.FC<Props> = ({
           <div className="divide-y divide-slate-100">
             {watchlistItems.length === 0 ? (
               <div className="p-8 text-center text-slate-400">
-                Bagus! Tidak ada outlet dorman atau mengalami churn risk saat ini.
+                Great! No dormant or churn-risk outlets right now.
               </div>
             ) : (
               paginatedWatchlistItems.map((outlet) => (
@@ -1764,13 +1985,13 @@ export const PerformanceDashboard: React.FC<Props> = ({
 
                       {outlet.isDormant && (
                         <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-rose-100 text-rose-800 border border-rose-200">
-                          DORMAN (&gt; 2 Bulan)
+                          DORMANT (&gt; 2 Months)
                         </span>
                       )}
 
                       {outlet.isChurnRisk && (
                         <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-100 text-amber-800 border border-amber-200">
-                          TURUN RING: {outlet.previousRing} → {outlet.calculatedRing}
+                          RING DROPPED: {outlet.previousRing} → {outlet.calculatedRing}
                         </span>
                       )}
                     </div>
@@ -1782,14 +2003,14 @@ export const PerformanceDashboard: React.FC<Props> = ({
                     <div className="flex flex-wrap items-center gap-4 text-xs text-slate-500 pt-0.5">
                       <span>
                         Last Order:{' '}
-                        <strong className="text-rose-700">{outlet.lastOrder || 'Tidak Ada'}</strong>
+                        <strong className="text-rose-700">{outlet.lastOrder || 'None'}</strong>
+                      </span>
+                      <span title={formatRupiah(outlet.omset2026)}>
+                        Sales 2026: <strong>{formatRupiahCompact(outlet.omset2026)}</strong>
                       </span>
                       <span>
-                        Omset 2026: <strong>{formatRupiah(outlet.omset2026)}</strong>
-                      </span>
-                      <span>
-                        MDS Ditugaskan:{' '}
-                        <strong>{outlet.assignedMds || 'Belum Dijadwalkan'}</strong>
+                        Assigned MDS:{' '}
+                        <strong>{outlet.assignedMds || 'Not Yet Scheduled'}</strong>
                       </span>
                     </div>
                   </div>
@@ -1801,7 +2022,7 @@ export const PerformanceDashboard: React.FC<Props> = ({
                         className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors flex items-center gap-1.5"
                       >
                         <Calendar className="w-3.5 h-3.5" />
-                        <span>Atur Jadwal Kunjungan MDS</span>
+                        <span>Set MDS Visit Schedule</span>
                       </button>
                     )}
                   </div>
@@ -1813,9 +2034,9 @@ export const PerformanceDashboard: React.FC<Props> = ({
           {watchlistItems.length > 0 && (
             <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 text-xs text-slate-600">
               <span>
-                Menampilkan {(watchlistPage - 1) * PAGE_SIZE + 1}
-                –{Math.min(watchlistPage * PAGE_SIZE, watchlistItems.length)} dari{' '}
-                {watchlistItems.length.toLocaleString('id-ID')} outlet
+                Showing {(watchlistPage - 1) * PAGE_SIZE + 1}
+                –{Math.min(watchlistPage * PAGE_SIZE, watchlistItems.length)} of{' '}
+                {watchlistItems.length.toLocaleString('id-ID')} outlets
               </span>
               <div className="flex items-center gap-1.5">
                 <button
@@ -1823,17 +2044,17 @@ export const PerformanceDashboard: React.FC<Props> = ({
                   disabled={watchlistPage === 1}
                   className="px-2.5 py-1.5 rounded-lg border border-slate-200 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
                 >
-                  Sebelumnya
+                  Previous
                 </button>
                 <span className="px-2 font-semibold text-slate-700">
-                  Halaman {watchlistPage} / {watchlistTotalPages}
+                  Page {watchlistPage} / {watchlistTotalPages}
                 </span>
                 <button
                   onClick={() => setWatchlistPage((p) => Math.min(watchlistTotalPages, p + 1))}
                   disabled={watchlistPage === watchlistTotalPages}
                   className="px-2.5 py-1.5 rounded-lg border border-slate-200 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
                 >
-                  Berikutnya
+                  Next
                 </button>
               </div>
             </div>
@@ -1848,10 +2069,10 @@ export const PerformanceDashboard: React.FC<Props> = ({
             <div>
               <h3 className="font-bold text-sm text-slate-900 flex items-center gap-2">
                 <Users className="w-4 h-4 text-indigo-600" />
-                <span>Leaderboard &amp; Ranking Performa MDS</span>
+                <span>MDS Performance Leaderboard &amp; Ranking</span>
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Evaluasi jumlah outlet dikelola, rata-rata growth omset, dan penanganan outlet dorman per MDS
+                Evaluates outlet count managed, average sales growth, and dormant outlet handling per MDS
               </p>
             </div>
           </div>
@@ -1861,12 +2082,12 @@ export const PerformanceDashboard: React.FC<Props> = ({
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
                   <th className="py-3 px-3 text-center w-12">Rank</th>
-                  <th className="py-3 px-3">Nama MDS</th>
-                  <th className="py-3 px-3 text-center">Outlet Dikelola</th>
-                  <th className="py-3 px-3 text-right">Total Omset Terkelola</th>
-                  <th className="py-3 px-3 text-right">Rata-rata % Growth</th>
-                  <th className="py-3 px-3 text-center">Outlet Dorman</th>
-                  <th className="py-3 px-3 text-center">Naik / Turun Ring</th>
+                  <th className="py-3 px-3">MDS Name</th>
+                  <th className="py-3 px-3 text-center">Outlets Managed</th>
+                  <th className="py-3 px-3 text-right">Total Sales Managed</th>
+                  <th className="py-3 px-3 text-right">Avg % Growth</th>
+                  <th className="py-3 px-3 text-center">Dormant Outlets</th>
+                  <th className="py-3 px-3 text-center">Ring Up / Down</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -1891,10 +2112,10 @@ export const PerformanceDashboard: React.FC<Props> = ({
                       <span className="font-bold text-slate-900 text-sm">{mds.namaMds}</span>
                     </td>
                     <td className="py-3 px-3 text-center font-semibold text-slate-700">
-                      {mds.outletCount} toko
+                      {mds.outletCount} outlets
                     </td>
-                    <td className="py-3 px-3 text-right font-bold text-slate-900">
-                      {formatRupiah(mds.totalOmset)}
+                    <td className="py-3 px-3 text-right font-bold text-slate-900" title={formatRupiah(mds.totalOmset)}>
+                      {formatRupiahCompact(mds.totalOmset)}
                     </td>
                     <td className="py-3 px-3 text-right font-semibold">
                       <span className={mds.avgGrowth >= 0 ? 'text-emerald-600' : 'text-rose-600'}>
@@ -1905,10 +2126,10 @@ export const PerformanceDashboard: React.FC<Props> = ({
                     <td className="py-3 px-3 text-center">
                       {mds.dormanCount > 0 ? (
                         <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 font-bold text-[11px]">
-                          {mds.dormanCount} dorman
+                          {mds.dormanCount} dormant
                         </span>
                       ) : (
-                        <span className="text-emerald-600 font-semibold">0 dorman</span>
+                        <span className="text-emerald-600 font-semibold">0 dormant</span>
                       )}
                     </td>
                     <td className="py-3 px-3 text-center">

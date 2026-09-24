@@ -3,6 +3,7 @@ import { useApp } from '../context/AppContext';
 import { CallPlanItem, OutletPerformance, OutletMapping } from '../types';
 import { Tooltip } from './Tooltip';
 import { Toast, ToastState } from './Toast';
+import { MultiSelectDropdown } from './MultiSelectDropdown';
 import {
   Calendar,
   CalendarCheck,
@@ -42,9 +43,9 @@ export const CallPlanManagement: React.FC = () => {
   const isManager = currentUser?.role === 'Manager';
 
   // Filters
-  const [selectedMds, setSelectedMds] = useState<string>('ALL');
-  const [selectedDay, setSelectedDay] = useState<string>('ALL');
-  const [selectedWeek, setSelectedWeek] = useState<'ALL' | 'w1' | 'w2' | 'w3' | 'w4'>('ALL');
+  const [selectedMds, setSelectedMds] = useState<string[]>([]);
+  const [selectedDay, setSelectedDay] = useState<string[]>([]);
+  const [selectedWeek, setSelectedWeek] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
 
@@ -121,13 +122,17 @@ export const CallPlanManagement: React.FC = () => {
         if (!myMdsNames.includes(item.namaMds.toLowerCase())) return false;
       }
 
-      if (selectedMds !== 'ALL' && item.namaMds !== selectedMds) return false;
-      if (selectedDay !== 'ALL' && item.visitDay !== selectedDay) return false;
+      if (selectedMds.length > 0 && !selectedMds.includes(item.namaMds)) return false;
+      if (selectedDay.length > 0 && !selectedDay.includes(item.visitDay)) return false;
 
-      if (selectedWeek === 'w1' && !item.week1) return false;
-      if (selectedWeek === 'w2' && !item.week2) return false;
-      if (selectedWeek === 'w3' && !item.week3) return false;
-      if (selectedWeek === 'w4' && !item.week4) return false;
+      if (selectedWeek.length > 0) {
+        const matchesWeek =
+          (selectedWeek.includes('w1') && item.week1) ||
+          (selectedWeek.includes('w2') && item.week2) ||
+          (selectedWeek.includes('w3') && item.week3) ||
+          (selectedWeek.includes('w4') && item.week4);
+        if (!matchesWeek) return false;
+      }
 
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
@@ -640,7 +645,8 @@ export const CallPlanManagement: React.FC = () => {
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Call Plan MDS');
-    XLSX.writeFile(wb, `Call_Plan_MDS_${selectedMds === 'ALL' ? 'Semua' : selectedMds}.xlsx`);
+    const mdsLabel = selectedMds.length === 0 ? 'Semua' : selectedMds.join('-');
+    XLSX.writeFile(wb, `Call_Plan_MDS_${mdsLabel}.xlsx`);
   };
 
   // Print schedule
@@ -760,47 +766,30 @@ export const CallPlanManagement: React.FC = () => {
           </div>
 
           <div>
-            <select
-              value={selectedMds}
-              onChange={(e) => setSelectedMds(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
-            >
-              <option value="ALL">Semua Petugas MDS ({accessibleMds.length})</option>
-              {accessibleMds.map((m) => (
-                <option key={m.namaMds} value={m.namaMds}>
-                  {m.namaMds} ({m.area})
-                </option>
-              ))}
-            </select>
+            <MultiSelectDropdown
+              label="Petugas MDS"
+              options={accessibleMds.map((m) => m.namaMds)}
+              selected={selectedMds}
+              onChange={setSelectedMds}
+            />
           </div>
 
           <div>
-            <select
-              value={selectedDay}
-              onChange={(e) => setSelectedDay(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
-            >
-              <option value="ALL">Semua Hari Kunjungan</option>
-              {daysOfWeek.map((d) => (
-                <option key={d} value={d}>
-                  Hari {d}
-                </option>
-              ))}
-            </select>
+            <MultiSelectDropdown
+              label="Hari Kunjungan"
+              options={[...daysOfWeek]}
+              selected={selectedDay}
+              onChange={setSelectedDay}
+            />
           </div>
 
           <div>
-            <select
-              value={selectedWeek}
-              onChange={(e) => setSelectedWeek(e.target.value as any)}
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
-            >
-              <option value="ALL">Semua Minggu</option>
-              <option value="w1">Hanya Minggu 1 (W1)</option>
-              <option value="w2">Hanya Minggu 2 (W2)</option>
-              <option value="w3">Hanya Minggu 3 (W3)</option>
-              <option value="w4">Hanya Minggu 4 (W4)</option>
-            </select>
+            <MultiSelectDropdown
+              label="Minggu"
+              options={['w1', 'w2', 'w3', 'w4']}
+              selected={selectedWeek}
+              onChange={setSelectedWeek}
+            />
           </div>
 
           {/* View toggle */}
@@ -884,7 +873,11 @@ export const CallPlanManagement: React.FC = () => {
               Daftar Call Plan ({filteredCallPlans.length} Jadwal)
             </h3>
             <span className="text-xs text-slate-500">
-              {selectedMds === 'ALL' ? 'Semua MDS' : `MDS: ${selectedMds}`}
+              {selectedMds.length === 0
+                ? 'Semua MDS'
+                : selectedMds.length === 1
+                ? `MDS: ${selectedMds[0]}`
+                : `${selectedMds.length} MDS dipilih`}
             </span>
           </div>
 
