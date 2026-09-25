@@ -20,7 +20,6 @@ import {
   appendMappingToSheet,
   updateMappingInSheet,
   saveCallPlansToSheet,
-  appendCallPlanToSheet,
   updateCallPlanInSheet,
   GoogleAuthExpiredError,
   updateUserPicPasswordInSheet,

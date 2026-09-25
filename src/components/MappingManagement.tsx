@@ -6,6 +6,7 @@ import { findCandidateMatches, CandidateMatch, calculateNameSimilarity } from '.
 import { Tooltip } from './Tooltip';
 import { Toast, ToastState } from './Toast';
 import { MultiSelectDropdown } from './MultiSelectDropdown';
+import { PageSizeSelector } from './PageSizeSelector';
 import {
   Plus,
   Edit2,
@@ -13,23 +14,100 @@ import {
   Filter,
   Download,
   Upload,
-  Check,
   X,
   AlertCircle,
   Sparkles,
   Layers,
   MapPin,
   CheckCircle2,
-  ChevronRight,
-  ArrowRight,
-  FileSpreadsheet,
   FileDown,
-  Store,
   ArrowUpDown,
   ChevronUp,
   ChevronDown,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+
+// Search-and-select input backed by Performance data — used for the
+// "Nama di BSP/UDN" and "Code 2/3" fields in the Add/Edit Mapping form.
+// Defined at MODULE level (not nested inside MappingManagement) so its own
+// query/dropdown state survives every keystroke elsewhere in that very long
+// form — a component defined inside another component's render body gets a
+// new identity on every parent re-render, which would silently reset this
+// field's local state constantly.
+const OutletSearchField: React.FC<{
+  label: string;
+  placeholder?: string;
+  displayValue: string;
+  pool: OutletPerformance[];
+  onSelect: (p: OutletPerformance) => void;
+  mono?: boolean;
+  optional?: boolean;
+}> = ({ label, placeholder, displayValue, pool, onSelect, mono, optional }) => {
+  const [query, setQuery] = useState(displayValue);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+
+  useEffect(() => {
+    setQuery(displayValue);
+  }, [displayValue]);
+
+  const results = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    return pool
+      .filter(
+        (p) =>
+          p.namaCustomerBaru.toLowerCase().includes(q) || p.kodeCustNfiGroup.toLowerCase().includes(q)
+      )
+      .slice(0, 8);
+  }, [pool, query]);
+
+  return (
+    <div className="relative">
+      <label className="block text-[11px] text-slate-600 mb-0.5">
+        {label} {optional && <span className="text-slate-400">(opsional)</span>}
+      </label>
+      <input
+        type="text"
+        value={query}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setShowSuggestions(true);
+        }}
+        onFocus={() => setShowSuggestions(true)}
+        onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+        placeholder={placeholder}
+        className={`w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs ${
+          mono ? 'font-mono' : ''
+        }`}
+      />
+      {showSuggestions && results.length > 0 && (
+        <div className="absolute z-30 mt-1 w-80 max-h-64 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg py-1 text-left">
+          {results.map((p) => (
+            <button
+              type="button"
+              key={p.kodeCustNfiGroup}
+              onMouseDown={() => {
+                onSelect(p);
+                setShowSuggestions(false);
+              }}
+              className="w-full text-left px-3 py-2 hover:bg-indigo-50 border-b border-slate-50 last:border-0"
+            >
+              <p className="font-bold text-xs text-slate-900 truncate">{p.namaCustomerBaru}</p>
+              <p className="text-[10px] font-mono text-slate-400 truncate">{p.kodeCustNfiGroup}</p>
+              <p className="text-[10px] text-slate-500 truncate">
+                {p.alamat} • {p.kecamatan}, {p.kabupaten}
+              </p>
+              <p className="text-[10px] text-slate-500 mt-0.5">
+                {p.sku2026} SKU • PA {p.avgPa2026.toFixed(1)} ({p.pa2026.toFixed(0)}%) • Avg Sales: Rp{' '}
+                {p.avgSales2026.toLocaleString('id-ID')}
+              </p>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
 
 export const MappingManagement: React.FC = () => {
   const {
@@ -442,6 +520,27 @@ export const MappingManagement: React.FC = () => {
     });
     return set;
   }, [mappings, editingMappingId]);
+
+  // Search pools for the BSP/UDN name & code search fields — outlets whose
+  // codes are already used elsewhere are excluded so search results only
+  // surface outlets that are actually still available to map, and (like
+  // every other outlet picker in this app) a Supervisor only sees outlets
+  // within their own accessible Depo.
+  const bspSearchPool = useMemo(() => {
+    let pool = performance.filter((p) => p.dist === 'BSP' && !codesUsedElsewhere.has(p.kodeCustNfiGroup));
+    if (!isManager && accessibleDepo.length > 0) {
+      pool = pool.filter((p) => accessibleDepo.includes(p.depo));
+    }
+    return pool;
+  }, [performance, codesUsedElsewhere, isManager, accessibleDepo]);
+
+  const udnSearchPool = useMemo(() => {
+    let pool = performance.filter((p) => p.dist === 'UDN' && !codesUsedElsewhere.has(p.kodeCustNfiGroup));
+    if (!isManager && accessibleDepo.length > 0) {
+      pool = pool.filter((p) => accessibleDepo.includes(p.depo));
+    }
+    return pool;
+  }, [performance, codesUsedElsewhere, isManager, accessibleDepo]);
 
   const bspDuplicateSuggestions = useMemo(() => {
     if (!namaCustomerBsp.trim() || !depoBsp) return [];
@@ -1201,26 +1300,10 @@ export const MappingManagement: React.FC = () => {
 
       {/* Mappings Table */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-        <div className="p-4 border-b border-slate-100 flex items-center justify-between flex-wrap gap-2">
+        <div className="p-4 border-b border-slate-100">
           <h3 className="font-bold text-sm text-slate-800">
             Daftar Mapping Outlet &amp; Sarana POSM ({filteredMappings.length} Terdata)
           </h3>
-          <div className="inline-flex items-center gap-1.5 rounded-xl bg-slate-100 p-1 text-xs font-semibold">
-            <span className="pl-2 text-slate-500">Baris/halaman:</span>
-            {[10, 25, 50].map((size) => (
-              <button
-                key={size}
-                onClick={() => setMappingPageSize(size)}
-                className={`px-2.5 py-1.5 rounded-lg transition-all ${
-                  mappingPageSize === size
-                    ? 'bg-white text-indigo-600 shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                {size}
-              </button>
-            ))}
-          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -1426,11 +1509,14 @@ export const MappingManagement: React.FC = () => {
 
         {sortedMappings.length > 0 && (
           <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 text-xs text-slate-600">
-            <span>
-              Menampilkan {(mappingPage - 1) * mappingPageSize + 1}
-              –{Math.min(mappingPage * mappingPageSize, sortedMappings.length)} dari{' '}
-              {sortedMappings.length.toLocaleString('id-ID')} outlet
-            </span>
+            <div className="flex items-center gap-3">
+              <span>
+                Menampilkan {(mappingPage - 1) * mappingPageSize + 1}
+                –{Math.min(mappingPage * mappingPageSize, sortedMappings.length)} dari{' '}
+                {sortedMappings.length.toLocaleString('id-ID')} outlet
+              </span>
+              <PageSizeSelector value={mappingPageSize} onChange={setMappingPageSize} />
+            </div>
             <div className="flex items-center gap-1.5">
               <button
                 onClick={() => setMappingPage((p) => Math.max(1, p - 1))}
@@ -1457,8 +1543,8 @@ export const MappingManagement: React.FC = () => {
       {/* WIZARD MODAL (TAMBAH / EDIT MAPPING) */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
-          <div className="bg-white rounded-3xl max-w-3xl w-full p-6 sm:p-7 shadow-2xl border border-slate-100 my-8">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+          <div className="bg-white rounded-3xl max-w-5xl w-full shadow-2xl border border-slate-100 my-8 max-h-[92vh] flex flex-col">
+            <div className="flex items-center justify-between px-6 sm:px-7 pt-6 sm:pt-7 pb-4 border-b border-slate-100 shrink-0">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600">
                   <Layers className="w-5 h-5" />
@@ -1482,7 +1568,7 @@ export const MappingManagement: React.FC = () => {
 
             {/* Stepper bar (only for new mapping) */}
             {!editingMappingId && (
-              <div className="flex items-center justify-between mt-4 mb-6 px-4">
+              <div className="flex items-center justify-between mt-4 mb-2 px-6 sm:px-7 shrink-0">
                 {[
                   { step: 1, label: '1. Pilih Toko Utama' },
                   { step: 2, label: '2. Rekomendasi Pairing' },
@@ -1513,20 +1599,21 @@ export const MappingManagement: React.FC = () => {
               </div>
             )}
 
-            {formError && (
-              <div className="mb-4 p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>{formError}</span>
-              </div>
-            )}
+            <form onSubmit={handleSubmitForm} className="flex flex-col flex-1 min-h-0">
+              <div className="flex-1 overflow-y-auto px-6 sm:px-7 py-4 space-y-4">
+                {formError && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-xl flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>{formError}</span>
+                  </div>
+                )}
 
-            <form onSubmit={handleSubmitForm} className="space-y-4">
-              {/* STEP 1: PILIH OUTLET UTAMA */}
-              {wizardStep === 1 && !editingMappingId && (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-bold text-slate-700">
-                      Pilih Distributor Asal Outlet Utama:
+                {/* STEP 1: PILIH OUTLET UTAMA */}
+                {wizardStep === 1 && !editingMappingId && (
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-slate-700">
+                        Pilih Distributor Asal Outlet Utama:
                     </label>
                     <div className="inline-flex rounded-xl bg-slate-100 p-1 text-xs font-semibold">
                       {(['BSP', 'UDN'] as const).map((dist) => (
@@ -1882,6 +1969,7 @@ export const MappingManagement: React.FC = () => {
                     </div>
                   </div>
 
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   {/* Distributor BSP Fields */}
                   <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
                     <span className="text-xs font-bold text-slate-800 block">
@@ -1889,12 +1977,16 @@ export const MappingManagement: React.FC = () => {
                     </span>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                       <div>
-                        <label className="block text-[11px] text-slate-600 mb-0.5">Nama di BSP</label>
-                        <input
-                          type="text"
-                          value={namaCustomerBsp}
-                          onChange={(e) => setNamaCustomerBsp(e.target.value)}
-                          className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs"
+                        <OutletSearchField
+                          label="Nama di BSP"
+                          placeholder="Cari nama/kode outlet BSP..."
+                          displayValue={namaCustomerBsp}
+                          pool={bspSearchPool}
+                          onSelect={(p) => {
+                            setNamaCustomerBsp(p.namaCustomerBaru);
+                            setDepoBsp(p.depo);
+                            setBspCode1(p.kodeCustNfiGroup);
+                          }}
                         />
                       </div>
                       <div>
@@ -1902,8 +1994,9 @@ export const MappingManagement: React.FC = () => {
                         <input
                           type="text"
                           value={depoBsp}
-                          onChange={(e) => setDepoBsp(e.target.value)}
-                          className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs"
+                          disabled
+                          placeholder="Otomatis terisi setelah pilih outlet"
+                          className="w-full px-2.5 py-1.5 bg-slate-100 border border-slate-200 rounded-lg text-xs text-slate-500 cursor-not-allowed"
                         />
                       </div>
                       <div>
@@ -1911,31 +2004,31 @@ export const MappingManagement: React.FC = () => {
                         <input
                           type="text"
                           value={bspCode1}
-                          onChange={(e) => setBspCode1(e.target.value)}
-                          className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono"
+                          disabled
+                          placeholder="Otomatis terisi setelah pilih outlet"
+                          className="w-full px-2.5 py-1.5 bg-slate-100 border border-slate-200 rounded-lg text-xs font-mono text-slate-500 cursor-not-allowed"
                         />
                       </div>
                       <div>
-                        <label className="block text-[11px] text-slate-600 mb-0.5">
-                          BSP Code 2 <span className="text-slate-400">(opsional)</span>
-                        </label>
-                        <input
-                          type="text"
-                          value={bspCode2}
-                          onChange={(e) => setBspCode2(e.target.value)}
-                          placeholder="Kode ganti pajak/NPWP, dll"
-                          className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono"
+                        <OutletSearchField
+                          label="BSP Code 2"
+                          optional
+                          placeholder="Kode ganti pajak/NPWP, dll — atau cari nama/kode"
+                          displayValue={bspCode2}
+                          pool={bspSearchPool}
+                          onSelect={(p) => setBspCode2(p.kodeCustNfiGroup)}
+                          mono
                         />
                       </div>
                       <div>
-                        <label className="block text-[11px] text-slate-600 mb-0.5">
-                          BSP Code 3 <span className="text-slate-400">(opsional)</span>
-                        </label>
-                        <input
-                          type="text"
-                          value={bspCode3}
-                          onChange={(e) => setBspCode3(e.target.value)}
-                          className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono"
+                        <OutletSearchField
+                          label="BSP Code 3"
+                          optional
+                          placeholder="Cari nama/kode outlet..."
+                          displayValue={bspCode3}
+                          pool={bspSearchPool}
+                          onSelect={(p) => setBspCode3(p.kodeCustNfiGroup)}
+                          mono
                         />
                       </div>
                     </div>
@@ -1988,12 +2081,16 @@ export const MappingManagement: React.FC = () => {
                     </span>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                       <div>
-                        <label className="block text-[11px] text-slate-600 mb-0.5">Nama di UDN</label>
-                        <input
-                          type="text"
-                          value={namaCustomerUdn}
-                          onChange={(e) => setNamaCustomerUdn(e.target.value)}
-                          className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs"
+                        <OutletSearchField
+                          label="Nama di UDN"
+                          placeholder="Cari nama/kode outlet UDN..."
+                          displayValue={namaCustomerUdn}
+                          pool={udnSearchPool}
+                          onSelect={(p) => {
+                            setNamaCustomerUdn(p.namaCustomerBaru);
+                            setSubDistUdn(p.depo);
+                            setUdnCode1(p.kodeCustNfiGroup);
+                          }}
                         />
                       </div>
                       <div>
@@ -2001,8 +2098,9 @@ export const MappingManagement: React.FC = () => {
                         <input
                           type="text"
                           value={subDistUdn}
-                          onChange={(e) => setSubDistUdn(e.target.value)}
-                          className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs"
+                          disabled
+                          placeholder="Otomatis terisi setelah pilih outlet"
+                          className="w-full px-2.5 py-1.5 bg-slate-100 border border-slate-200 rounded-lg text-xs text-slate-500 cursor-not-allowed"
                         />
                       </div>
                       <div>
@@ -2010,31 +2108,31 @@ export const MappingManagement: React.FC = () => {
                         <input
                           type="text"
                           value={udnCode1}
-                          onChange={(e) => setUdnCode1(e.target.value)}
-                          className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono"
+                          disabled
+                          placeholder="Otomatis terisi setelah pilih outlet"
+                          className="w-full px-2.5 py-1.5 bg-slate-100 border border-slate-200 rounded-lg text-xs font-mono text-slate-500 cursor-not-allowed"
                         />
                       </div>
                       <div>
-                        <label className="block text-[11px] text-slate-600 mb-0.5">
-                          UDN Code 2 <span className="text-slate-400">(opsional)</span>
-                        </label>
-                        <input
-                          type="text"
-                          value={udnCode2}
-                          onChange={(e) => setUdnCode2(e.target.value)}
-                          placeholder="Kode ganti pajak/NPWP, dll"
-                          className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono"
+                        <OutletSearchField
+                          label="UDN Code 2"
+                          optional
+                          placeholder="Kode ganti pajak/NPWP, dll — atau cari nama/kode"
+                          displayValue={udnCode2}
+                          pool={udnSearchPool}
+                          onSelect={(p) => setUdnCode2(p.kodeCustNfiGroup)}
+                          mono
                         />
                       </div>
                       <div>
-                        <label className="block text-[11px] text-slate-600 mb-0.5">
-                          UDN Code 3 <span className="text-slate-400">(opsional)</span>
-                        </label>
-                        <input
-                          type="text"
-                          value={udnCode3}
-                          onChange={(e) => setUdnCode3(e.target.value)}
-                          className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono"
+                        <OutletSearchField
+                          label="UDN Code 3"
+                          optional
+                          placeholder="Cari nama/kode outlet..."
+                          displayValue={udnCode3}
+                          pool={udnSearchPool}
+                          onSelect={(p) => setUdnCode3(p.kodeCustNfiGroup)}
+                          mono
                         />
                       </div>
                     </div>
@@ -2078,6 +2176,7 @@ export const MappingManagement: React.FC = () => {
                         </div>
                       </div>
                     )}
+                  </div>
                   </div>
 
                   {/* Geolocation & Address */}
@@ -2146,6 +2245,7 @@ export const MappingManagement: React.FC = () => {
                     </div>
                   )}
 
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   {/* Sarana Rak POSM Toggles */}
                   <div
                     className={`p-4 rounded-2xl border space-y-3 ${
@@ -2158,7 +2258,7 @@ export const MappingManagement: React.FC = () => {
                       Sarana Display &amp; Rak POSM
                     </span>
 
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    <div className="grid grid-cols-2 gap-2.5">
                       {[
                         { label: 'Dishub', checked: dishub, set: setDishub },
                         { label: 'Rak 50 cm', checked: rak50cm, set: setRak50cm },
@@ -2197,7 +2297,7 @@ export const MappingManagement: React.FC = () => {
                       Program Display Wow
                     </span>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 gap-4">
                       <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2">
                         <label className="flex items-center gap-2 cursor-pointer">
                           <input
@@ -2259,6 +2359,7 @@ export const MappingManagement: React.FC = () => {
                       </div>
                     </div>
                   </div>
+                  </div>
 
                   {/* MDS & PIC Assignment */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -2293,7 +2394,12 @@ export const MappingManagement: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="pt-3 flex justify-between items-center border-t border-slate-100">
+                  </div>
+              )}
+              </div>
+
+              {(wizardStep === 4 || editingMappingId) && (
+                <div className="shrink-0 px-6 sm:px-7 py-4 border-t border-slate-100 flex justify-between items-center bg-white rounded-b-3xl">
                     {!editingMappingId && (
                       <button
                         type="button"
@@ -2318,7 +2424,6 @@ export const MappingManagement: React.FC = () => {
                         {editingMappingId ? 'Simpan Perubahan' : 'Selesaikan Mapping'}
                       </button>
                     </div>
-                  </div>
                 </div>
               )}
             </form>

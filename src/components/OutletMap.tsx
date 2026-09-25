@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { OutletPerformance } from '../types';
 import L from 'leaflet';
-import { MapPin, Filter, Search, Layers, Store, ExternalLink } from 'lucide-react';
+import { MapPin, Filter, Search, ExternalLink } from 'lucide-react';
 import { MultiSelectDropdown } from './MultiSelectDropdown';
 
 interface Props {

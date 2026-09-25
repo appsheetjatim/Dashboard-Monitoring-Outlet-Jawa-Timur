@@ -1,15 +1,13 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
-import { OutletPerformance, OutletMapping } from '../types';
+import { OutletPerformance } from '../types';
 import { Tooltip } from './Tooltip';
 import { MultiSelectDropdown } from './MultiSelectDropdown';
+import { PageSizeSelector } from './PageSizeSelector';
 import {
   TrendingUp,
   TrendingDown,
-  DollarSign,
   Store,
-  Layers,
-  ShoppingBag,
   Award,
   AlertTriangle,
   FileSpreadsheet,
@@ -25,7 +23,6 @@ import {
   CheckCircle,
   Clock,
   Sparkles,
-  ExternalLink,
   RotateCw,
   MapPin,
 } from 'lucide-react';
@@ -401,27 +398,24 @@ export const PerformanceDashboard: React.FC<Props> = ({
 
   const yoyGrowth = totalOmsetPrev > 0 ? ((totalOmset - totalOmsetPrev) / totalOmsetPrev) * 100 : 0;
 
-  // Portfolio-level Avg Sales (average of each outlet's Avg Sales for the
-  // selected year) + its YoY growth — shown alongside Total Sales so the
-  // headline number and the "per outlet" picture sit together.
+  // Portfolio-level Avg Sales — SUM of each outlet's own Avg Sales field
+  // (not divided by outlet count, and not Total Sales / 12 either): each
+  // outlet's Avg Sales is already its own monthly average, so adding them
+  // together gives the combined monthly average across the whole portfolio.
   const avgSalesTotal = useMemo(() => {
-    if (filteredData.length === 0) return 0;
-    const sum = filteredData.reduce((s, item) => {
+    return filteredData.reduce((s, item) => {
       if (selectedYear === '2024') return s + (item.avgSales2024 || 0);
       if (selectedYear === '2025') return s + (item.avgSales2025 || 0);
       return s + (item.avgSales2026 || 0);
     }, 0);
-    return sum / filteredData.length;
   }, [filteredData, selectedYear]);
 
   const avgSalesTotalPrev = useMemo(() => {
-    if (filteredData.length === 0) return 0;
-    const sum = filteredData.reduce((s, item) => {
+    return filteredData.reduce((s, item) => {
       if (selectedYear === '2025') return s + (item.avgSales2024 || 0);
       if (selectedYear === '2026') return s + (item.avgSales2025 || 0);
       return s + (item.avgSales2024 || 0);
     }, 0);
-    return sum / filteredData.length;
   }, [filteredData, selectedYear]);
 
   const avgSalesGrowth =
@@ -918,10 +912,13 @@ export const PerformanceDashboard: React.FC<Props> = ({
 
         {rows.length > 0 && (
           <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 text-xs text-slate-600">
-            <span>
-              Showing {start + 1}–{Math.min(page * pageSize, rows.length)} of{' '}
-              {rows.length.toLocaleString('id-ID')} outlets
-            </span>
+            <div className="flex items-center gap-3">
+              <span>
+                Showing {start + 1}–{Math.min(page * pageSize, rows.length)} of{' '}
+                {rows.length.toLocaleString('id-ID')} outlets
+              </span>
+              <PageSizeSelector value={pageSize} onChange={setPageSize} />
+            </div>
             <div className="flex items-center gap-1.5">
               <button
                 onClick={() => onPageChange(Math.max(1, page - 1))}
@@ -1127,10 +1124,13 @@ export const PerformanceDashboard: React.FC<Props> = ({
 
         {outlets.length > 0 && (
           <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 text-xs text-slate-600">
-            <span>
-              Showing {start + 1}–{Math.min(page * pageSize, outlets.length)} of{' '}
-              {outlets.length.toLocaleString('id-ID')} outlets
-            </span>
+            <div className="flex items-center gap-3">
+              <span>
+                Showing {start + 1}–{Math.min(page * pageSize, outlets.length)} of{' '}
+                {outlets.length.toLocaleString('id-ID')} outlets
+              </span>
+              <PageSizeSelector value={pageSize} onChange={setPageSize} />
+            </div>
             <div className="flex items-center gap-1.5">
               <button
                 onClick={() => onPageChange(Math.max(1, page - 1))}
@@ -1293,25 +1293,6 @@ export const PerformanceDashboard: React.FC<Props> = ({
               ))}
             </div>
 
-            {/* Rows-per-page Selector — shared by Termapping, Belum
-                Termapping per Depo, Coverage, and Watchlist tables below */}
-            <div className="inline-flex items-center gap-1.5 rounded-xl bg-slate-100 p-1 text-xs font-semibold">
-              <span className="pl-2 text-slate-500">Baris/halaman:</span>
-              {[10, 25, 50].map((size) => (
-                <button
-                  key={size}
-                  onClick={() => setPageSize(size)}
-                  className={`px-2.5 py-1.5 rounded-lg transition-all ${
-                    pageSize === size
-                      ? 'bg-white text-indigo-600 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  {size}
-                </button>
-              ))}
-            </div>
-
             {/* Export Buttons */}
             <div className="flex items-center gap-1.5">
               <button
@@ -1426,7 +1407,7 @@ export const PerformanceDashboard: React.FC<Props> = ({
             </div>
             <div className="mt-1.5 pt-1.5 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400">
               <span title={formatRupiah(avgSalesTotal)}>
-                Avg Sales: <span className="text-slate-600 font-semibold">{formatRupiahCompact(avgSalesTotal)}</span>
+                Total Avg Sales: <span className="text-slate-600 font-semibold">{formatRupiahCompact(avgSalesTotal)}</span>
               </span>
               <span className={avgSalesGrowth >= 0 ? 'text-emerald-600 font-semibold' : 'text-rose-600 font-semibold'}>
                 {avgSalesGrowth >= 0 ? '+' : ''}
@@ -1970,11 +1951,14 @@ export const PerformanceDashboard: React.FC<Props> = ({
 
           {coverageData.length > 0 && (
             <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 text-xs text-slate-600">
-              <span>
-                Showing {(coveragePage - 1) * pageSize + 1}
-                –{Math.min(coveragePage * pageSize, coverageData.length)} of{' '}
-                {coverageData.length.toLocaleString('id-ID')} outlets
-              </span>
+              <div className="flex items-center gap-3">
+                <span>
+                  Showing {(coveragePage - 1) * pageSize + 1}
+                  –{Math.min(coveragePage * pageSize, coverageData.length)} of{' '}
+                  {coverageData.length.toLocaleString('id-ID')} outlets
+                </span>
+                <PageSizeSelector value={pageSize} onChange={setPageSize} />
+              </div>
               <div className="flex items-center gap-1.5">
                 <button
                   onClick={() => setCoveragePage((p) => Math.max(1, p - 1))}
@@ -2084,11 +2068,14 @@ export const PerformanceDashboard: React.FC<Props> = ({
 
           {watchlistItems.length > 0 && (
             <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 text-xs text-slate-600">
-              <span>
-                Showing {(watchlistPage - 1) * pageSize + 1}
-                –{Math.min(watchlistPage * pageSize, watchlistItems.length)} of{' '}
-                {watchlistItems.length.toLocaleString('id-ID')} outlets
-              </span>
+              <div className="flex items-center gap-3">
+                <span>
+                  Showing {(watchlistPage - 1) * pageSize + 1}
+                  –{Math.min(watchlistPage * pageSize, watchlistItems.length)} of{' '}
+                  {watchlistItems.length.toLocaleString('id-ID')} outlets
+                </span>
+                <PageSizeSelector value={pageSize} onChange={setPageSize} />
+              </div>
               <div className="flex items-center gap-1.5">
                 <button
                   onClick={() => setWatchlistPage((p) => Math.max(1, p - 1))}
