@@ -7,6 +7,7 @@ import { Tooltip } from './Tooltip';
 import { Toast, ToastState } from './Toast';
 import { MultiSelectDropdown } from './MultiSelectDropdown';
 import { PageSizeSelector } from './PageSizeSelector';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import {
   Plus,
   Edit2,
@@ -44,6 +45,7 @@ const OutletSearchField: React.FC<{
   optional?: boolean;
 }> = ({ label, placeholder, displayValue, pool, onSelect, mono, optional }) => {
   const [query, setQuery] = useState(displayValue);
+  const debouncedQuery = useDebouncedValue(query);
   const [showSuggestions, setShowSuggestions] = useState(false);
 
   useEffect(() => {
@@ -51,7 +53,7 @@ const OutletSearchField: React.FC<{
   }, [displayValue]);
 
   const results = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = debouncedQuery.trim().toLowerCase();
     if (!q) return [];
     return pool
       .filter(
@@ -59,7 +61,7 @@ const OutletSearchField: React.FC<{
           p.namaCustomerBaru.toLowerCase().includes(q) || p.kodeCustNfiGroup.toLowerCase().includes(q)
       )
       .slice(0, 8);
-  }, [pool, query]);
+  }, [pool, debouncedQuery]);
 
   return (
     <div className="relative">
@@ -127,6 +129,7 @@ export const MappingManagement: React.FC = () => {
 
   // Filters & Search
   const [searchQuery, setSearchQuery] = useState('');
+  const debouncedSearchQuery = useDebouncedValue(searchQuery);
   const [filterDepo, setFilterDepo] = useState<string[]>([]);
   const [filterRing, setFilterRing] = useState<string[]>([]);
   const [filterPosm, setFilterPosm] = useState<string[]>([]);
@@ -143,6 +146,7 @@ export const MappingManagement: React.FC = () => {
   const [primaryDist, setPrimaryDist] = useState<'BSP' | 'UDN'>('BSP');
   const [selectedPrimaryOutlet, setSelectedPrimaryOutlet] = useState<OutletPerformance | null>(null);
   const [wizardSearch, setWizardSearch] = useState('');
+  const debouncedWizardSearch = useDebouncedValue(wizardSearch);
   const [wizardSubDist, setWizardSubDist] = useState('ALL');
   const [wizardDepo, setWizardDepo] = useState('ALL');
   const [wizardKabupaten, setWizardKabupaten] = useState('ALL');
@@ -230,8 +234,8 @@ export const MappingManagement: React.FC = () => {
         if (!hasDishub && !hasRak && !hasWow) return false;
       }
 
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
+      if (debouncedSearchQuery.trim()) {
+        const q = debouncedSearchQuery.toLowerCase();
         const matchesCode = m.customerSoGroupAreaCode.toLowerCase().includes(q);
         const matchesName = m.customerSoGroupArea.toLowerCase().includes(q);
         const matchesBsp = m.namaCustomerBsp.toLowerCase().includes(q) || m.bspCode1.toLowerCase().includes(q);
@@ -252,7 +256,7 @@ export const MappingManagement: React.FC = () => {
     filterKabupaten,
     filterKecamatan,
     filterPosm,
-    searchQuery,
+    debouncedSearchQuery,
   ]);
 
   // Sorting for the Daftar Mapping Outlet table
@@ -414,14 +418,14 @@ export const MappingManagement: React.FC = () => {
     if (wizardDepo !== 'ALL') pool = pool.filter((p) => p.depo === wizardDepo);
     if (wizardKabupaten !== 'ALL') pool = pool.filter((p) => p.kabupaten === wizardKabupaten);
     if (wizardKecamatan !== 'ALL') pool = pool.filter((p) => p.kecamatan === wizardKecamatan);
-    if (wizardSearch.trim()) {
-      const q = wizardSearch.trim().toLowerCase();
+    if (debouncedWizardSearch.trim()) {
+      const q = debouncedWizardSearch.trim().toLowerCase();
       pool = pool.filter(
         (p) => p.namaCustomerBaru.toLowerCase().includes(q) || p.kodeCustNfiGroup.toLowerCase().includes(q)
       );
     }
     return pool;
-  }, [wizardBasePool, wizardSubDist, wizardDepo, wizardKabupaten, wizardKecamatan, wizardSearch]);
+  }, [wizardBasePool, wizardSubDist, wizardDepo, wizardKabupaten, wizardKecamatan, debouncedWizardSearch]);
 
   const primaryOutletDisplayed = useMemo(
     () => primaryOutletResults.slice(0, WIZARD_MAX_RESULTS),

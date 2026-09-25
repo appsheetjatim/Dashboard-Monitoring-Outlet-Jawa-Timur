@@ -4,6 +4,7 @@ import { OutletPerformance } from '../types';
 import { Tooltip } from './Tooltip';
 import { MultiSelectDropdown } from './MultiSelectDropdown';
 import { PageSizeSelector } from './PageSizeSelector';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import {
   TrendingUp,
   TrendingDown,
@@ -59,6 +60,7 @@ export const PerformanceDashboard: React.FC<Props> = ({
   const [selectedKecamatan, setSelectedKecamatan] = useState<string[]>([]);
   const [selectedRing, setSelectedRing] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const debouncedSearchQuery = useDebouncedValue(searchQuery);
 
   // Sorting
   const [sortField, setSortField] = useState<keyof OutletPerformance>('omset2026');
@@ -157,8 +159,8 @@ export const PerformanceDashboard: React.FC<Props> = ({
       if (selectedKecamatan.length > 0 && !selectedKecamatan.includes(item.kecamatan)) return false;
       if (selectedRing.length > 0 && !selectedRing.includes(item.calculatedRing)) return false;
 
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
+      if (debouncedSearchQuery.trim()) {
+        const q = debouncedSearchQuery.toLowerCase();
         const matchesCode = item.kodeCustNfiGroup.toLowerCase().includes(q);
         const matchesName = item.namaCustomerBaru.toLowerCase().includes(q);
         const matchesKec = item.kecamatan.toLowerCase().includes(q);
@@ -177,7 +179,7 @@ export const PerformanceDashboard: React.FC<Props> = ({
     selectedKabupaten,
     selectedKecamatan,
     selectedRing,
-    searchQuery,
+    debouncedSearchQuery,
   ]);
 
   // Split filteredData into "Termapping" (this outlet's raw distributor code
@@ -270,8 +272,8 @@ export const PerformanceDashboard: React.FC<Props> = ({
         return false;
       });
     }
-    if (searchQuery.trim()) {
-      const q = searchQuery.trim().toLowerCase();
+    if (debouncedSearchQuery.trim()) {
+      const q = debouncedSearchQuery.trim().toLowerCase();
       list = list.filter(
         (m) =>
           m.customerSoGroupArea.toLowerCase().includes(q) ||
@@ -329,7 +331,7 @@ export const PerformanceDashboard: React.FC<Props> = ({
     selectedKecamatan,
     selectedRing,
     selectedDist,
-    searchQuery,
+    debouncedSearchQuery,
   ]);
 
   const totalUnmappedCount = useMemo(

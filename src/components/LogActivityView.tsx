@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { LogActivityRecord } from '../types';
 import {
   History,
@@ -19,6 +20,7 @@ export const LogActivityView: React.FC = () => {
   const { logs, userPics } = useApp();
 
   const [searchQuery, setSearchQuery] = useState('');
+  const debouncedSearchQuery = useDebouncedValue(searchQuery);
   const [filterPic, setFilterPic] = useState('ALL');
   const [filterTarget, setFilterTarget] = useState('ALL');
   const [filterAction, setFilterAction] = useState('ALL');
@@ -29,8 +31,8 @@ export const LogActivityView: React.FC = () => {
       if (filterTarget !== 'ALL' && l.sheetTarget !== filterTarget) return false;
       if (filterAction !== 'ALL' && l.jenisAksi !== filterAction) return false;
 
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
+      if (debouncedSearchQuery.trim()) {
+        const q = debouncedSearchQuery.toLowerCase();
         const matchesDetail = l.detailPerubahan.toLowerCase().includes(q);
         const matchesId = l.idRecord.toLowerCase().includes(q);
         const matchesPic = l.namaPic.toLowerCase().includes(q);
@@ -38,7 +40,7 @@ export const LogActivityView: React.FC = () => {
       }
       return true;
     });
-  }, [logs, filterPic, filterTarget, filterAction, searchQuery]);
+  }, [logs, filterPic, filterTarget, filterAction, debouncedSearchQuery]);
 
   const picOptions = useMemo(() => {
     return Array.from(new Set(logs.map((l) => l.namaPic).filter(Boolean)));

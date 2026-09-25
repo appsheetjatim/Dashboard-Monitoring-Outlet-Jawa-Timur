@@ -4,6 +4,7 @@ import { CallPlanItem, OutletPerformance, OutletMapping } from '../types';
 import { Tooltip } from './Tooltip';
 import { Toast, ToastState } from './Toast';
 import { MultiSelectDropdown } from './MultiSelectDropdown';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import {
   Calendar,
   Edit2,
@@ -42,6 +43,7 @@ export const CallPlanManagement: React.FC = () => {
   const [selectedDay, setSelectedDay] = useState<string[]>([]);
   const [selectedWeek, setSelectedWeek] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const debouncedSearchQuery = useDebouncedValue(searchQuery);
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
 
   // Edit Modal (editing an EXISTING call plan entry only — creation now goes
@@ -62,6 +64,7 @@ export const CallPlanManagement: React.FC = () => {
   const [modalW4, setModalW4] = useState(true);
   const [modalFreq, setModalFreq] = useState(4);
   const [modalOutletSearch, setModalOutletSearch] = useState('');
+  const debouncedModalOutletSearch = useDebouncedValue(modalOutletSearch);
   const [showModalOutletSuggestions, setShowModalOutletSuggestions] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
 
@@ -86,6 +89,7 @@ export const CallPlanManagement: React.FC = () => {
   const [wizardDepo, setWizardDepo] = useState('ALL');
   const [wizardRing, setWizardRing] = useState('ALL');
   const [wizardSearch, setWizardSearch] = useState('');
+  const debouncedWizardSearch = useDebouncedValue(wizardSearch);
   const [wizardSelectedCodes, setWizardSelectedCodes] = useState<string[]>([]);
   const [wizardWeeks, setWizardWeeks] = useState<Record<string, WizardWeeks>>({});
 
@@ -131,8 +135,8 @@ export const CallPlanManagement: React.FC = () => {
         if (!matchesWeek) return false;
       }
 
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
+      if (debouncedSearchQuery.trim()) {
+        const q = debouncedSearchQuery.toLowerCase();
         const matchesCode = item.customerSoGroupAreaCode.toLowerCase().includes(q);
         const matchesName = item.customerSoGroupArea.toLowerCase().includes(q);
         const matchesMds = item.namaMds.toLowerCase().includes(q);
@@ -141,7 +145,7 @@ export const CallPlanManagement: React.FC = () => {
 
       return true;
     });
-  }, [callPlans, isManager, accessibleMds, selectedMds, selectedDay, selectedWeek, searchQuery]);
+  }, [callPlans, isManager, accessibleMds, selectedMds, selectedDay, selectedWeek, debouncedSearchQuery]);
 
   // Day groupings for Calendar Grid view
   const daysOfWeek = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'] as const;
@@ -258,7 +262,7 @@ export const CallPlanManagement: React.FC = () => {
   }, [mappings, isManager, accessibleDepo]);
 
   const modalOutletSuggestions = useMemo(() => {
-    const q = modalOutletSearch.trim().toLowerCase();
+    const q = debouncedModalOutletSearch.trim().toLowerCase();
     if (!q) return [];
     return modalOutletPool
       .filter(
@@ -267,7 +271,7 @@ export const CallPlanManagement: React.FC = () => {
           m.customerSoGroupAreaCode.toLowerCase().includes(q)
       )
       .slice(0, 8);
-  }, [modalOutletPool, modalOutletSearch]);
+  }, [modalOutletPool, debouncedModalOutletSearch]);
 
   // Selecting an outlet from search is the ONLY way Code/Ring/Address get
   // set now — they always come straight from that outlet's own Mapping
@@ -419,8 +423,8 @@ export const CallPlanManagement: React.FC = () => {
     if (wizardKecamatan !== 'ALL') pool = pool.filter((m) => m.kecamatan === wizardKecamatan);
     if (wizardDepo !== 'ALL') pool = pool.filter((m) => m.depoBsp === wizardDepo || m.subDistUdn === wizardDepo);
     if (wizardRing !== 'ALL') pool = pool.filter((m) => m.klasifikasiOutlet === wizardRing);
-    if (wizardSearch.trim()) {
-      const q = wizardSearch.trim().toLowerCase();
+    if (debouncedWizardSearch.trim()) {
+      const q = debouncedWizardSearch.trim().toLowerCase();
       pool = pool.filter(
         (m) => m.customerSoGroupArea.toLowerCase().includes(q) || m.customerSoGroupAreaCode.toLowerCase().includes(q)
       );
@@ -437,7 +441,7 @@ export const CallPlanManagement: React.FC = () => {
     wizardKecamatan,
     wizardDepo,
     wizardRing,
-    wizardSearch,
+    debouncedWizardSearch,
     wizardMds,
     wizardDay,
     wizardAlreadyScheduledKeys,

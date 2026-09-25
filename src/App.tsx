@@ -3,17 +3,39 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, Suspense, lazy } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { Header } from './components/Header';
 import { Sidebar, ActiveTab } from './components/Sidebar';
-import { PerformanceDashboard } from './components/PerformanceDashboard';
-import { MappingManagement } from './components/MappingManagement';
-import { CallPlanManagement } from './components/CallPlanManagement';
-import { OutletMap } from './components/OutletMap';
-import { LogActivityView } from './components/LogActivityView';
 import { LoginModal } from './components/LoginModal';
 import { AlertCircle, RotateCw, FileSpreadsheet, ShieldCheck } from 'lucide-react';
+
+// Lazy-loaded: each tab's code (and, for Peta Sebaran, the Leaflet map
+// library) is only downloaded the first time that tab is actually opened,
+// instead of bundling everything into one large chunk everyone pays for on
+// first load regardless of which tabs they ever visit.
+const PerformanceDashboard = lazy(() =>
+  import('./components/PerformanceDashboard').then((m) => ({ default: m.PerformanceDashboard }))
+);
+const MappingManagement = lazy(() =>
+  import('./components/MappingManagement').then((m) => ({ default: m.MappingManagement }))
+);
+const CallPlanManagement = lazy(() =>
+  import('./components/CallPlanManagement').then((m) => ({ default: m.CallPlanManagement }))
+);
+const OutletMap = lazy(() => import('./components/OutletMap').then((m) => ({ default: m.OutletMap })));
+const LogActivityView = lazy(() =>
+  import('./components/LogActivityView').then((m) => ({ default: m.LogActivityView }))
+);
+
+function TabLoadingFallback() {
+  return (
+    <div className="flex items-center justify-center py-24 text-slate-400 text-sm gap-2">
+      <RotateCw className="w-4 h-4 animate-spin" />
+      Memuat...
+    </div>
+  );
+}
 
 function DashboardContent() {
   const { currentUser, errorMessage, syncWithGoogleSheets, syncStatus, hasEverSynced } = useApp();
@@ -130,22 +152,24 @@ function DashboardContent() {
         />
 
         <main className="flex-1 p-4 lg:p-6 overflow-x-hidden min-w-0">
-          {activeTab === 'performance' && (
-            <PerformanceDashboard
-              onNavigateToCallPlan={handleNavigateToCallPlan}
-              onNavigateToMap={handleNavigateToMap}
-            />
-          )}
+          <Suspense fallback={<TabLoadingFallback />}>
+            {activeTab === 'performance' && (
+              <PerformanceDashboard
+                onNavigateToCallPlan={handleNavigateToCallPlan}
+                onNavigateToMap={handleNavigateToMap}
+              />
+            )}
 
-          {activeTab === 'mapping' && <MappingManagement />}
+            {activeTab === 'mapping' && <MappingManagement />}
 
-          {activeTab === 'callplan' && <CallPlanManagement />}
+            {activeTab === 'callplan' && <CallPlanManagement />}
 
-          {activeTab === 'map' && (
-            <OutletMap onSelectOutletForCallPlan={handleNavigateToCallPlan} />
-          )}
+            {activeTab === 'map' && (
+              <OutletMap onSelectOutletForCallPlan={handleNavigateToCallPlan} />
+            )}
 
-          {activeTab === 'logs' && <LogActivityView />}
+            {activeTab === 'logs' && <LogActivityView />}
+          </Suspense>
         </main>
       </div>
     </div>

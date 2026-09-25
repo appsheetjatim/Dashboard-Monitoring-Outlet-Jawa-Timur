@@ -4,6 +4,7 @@ import { OutletPerformance } from '../types';
 import L from 'leaflet';
 import { MapPin, Filter, Search, ExternalLink } from 'lucide-react';
 import { MultiSelectDropdown } from './MultiSelectDropdown';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 
 interface Props {
   onSelectOutletForCallPlan?: (code: string) => void;
@@ -30,6 +31,7 @@ export const OutletMap: React.FC<Props> = ({ onSelectOutletForCallPlan }) => {
   const [selectedRing, setSelectedRing] = useState<string[]>([]);
   const [selectedDepo, setSelectedDepo] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const debouncedSearchQuery = useDebouncedValue(searchQuery);
   const [activeOutlet, setActiveOutlet] = useState<OutletPerformance | null>(null);
 
   // Filtered outlets that have valid coordinates
@@ -42,8 +44,8 @@ export const OutletMap: React.FC<Props> = ({ onSelectOutletForCallPlan }) => {
       if (!isManager && accessibleDepo.length > 0 && !accessibleDepo.includes(item.depo)) return false;
       if (selectedRing.length > 0 && !selectedRing.includes(item.calculatedRing)) return false;
       if (selectedDepo.length > 0 && !selectedDepo.includes(item.depo)) return false;
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
+      if (debouncedSearchQuery.trim()) {
+        const q = debouncedSearchQuery.toLowerCase();
         if (
           !item.namaCustomerBaru.toLowerCase().includes(q) &&
           !item.kodeCustNfiGroup.toLowerCase().includes(q)
@@ -53,7 +55,7 @@ export const OutletMap: React.FC<Props> = ({ onSelectOutletForCallPlan }) => {
       }
       return true;
     });
-  }, [performance, selectedRing, selectedDepo, searchQuery]);
+  }, [performance, selectedRing, selectedDepo, debouncedSearchQuery]);
 
   const depoOptions = useMemo(() => {
     if (!isManager) return [...accessibleDepo].sort();
@@ -148,6 +150,17 @@ export const OutletMap: React.FC<Props> = ({ onSelectOutletForCallPlan }) => {
   // Initialize Map
   useEffect(() => {
     if (!mapContainerRef.current || mapInstanceRef.current) return;
+
+    // Leaflet's CSS is only needed on this one tab — load it dynamically
+    // here instead of in index.html, so every other tab doesn't pay for a
+    // render-blocking third-party stylesheet fetch it never uses.
+    if (!document.getElementById('leaflet-css')) {
+      const link = document.createElement('link');
+      link.id = 'leaflet-css';
+      link.rel = 'stylesheet';
+      link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+      document.head.appendChild(link);
+    }
 
     // Center on East Java (Surabaya / Malang region)
     const map = L.map(mapContainerRef.current, {

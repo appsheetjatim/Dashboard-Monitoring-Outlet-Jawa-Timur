@@ -1,13 +1,17 @@
-@import "tailwindcss";
-
-/* Browsers skip background colors when printing by default (to save ink),
-   which silently hides anything that relies on a colored background instead
-   of text/border — e.g. the W1-W4 visit dots and Ring badges on the printed
-   Call Plan schedule. Force exact color printing everywhere. */
-@media print {
-  * {
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
-    color-adjust: exact !important;
-  }
-}
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dashboard Monitoring Outlet Distributor</title>
+    <meta name="description" content="Dashboard monitoring performance outlet distributor, klasifikasi, POSM, dan jadwal kunjungan mingguan MDS" />
+    <meta property="og:title" content="Dashboard Monitoring Outlet Distributor" />
+    <meta property="og:description" content="Dashboard monitoring performance outlet distributor, klasifikasi, POSM, dan jadwal kunjungan mingguan MDS" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

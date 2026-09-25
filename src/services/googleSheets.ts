@@ -184,8 +184,16 @@ async function overwriteSheetValues(
   return updateSheetValues(`${sheetName}!A1`, allValues, token);
 }
 
+// Only needs checking once per browser session — the sheet, once verified
+// to exist, isn't going to disappear on its own between syncs. Without this
+// flag, every single "Sync Data" click would pay for an extra sequential
+// network round-trip to Google's metadata API before the real fetch even
+// starts, just to re-confirm something that was already true a moment ago.
+let logActivitySheetVerified = false;
+
 // Ensure Log Activity sheet exists
 export async function ensureLogActivitySheetExists(token: string) {
+  if (logActivitySheetVerified) return;
   try {
     const metadataUrl = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}`;
     const res = await fetch(metadataUrl, {
@@ -233,6 +241,7 @@ export async function ensureLogActivitySheetExists(token: string) {
         token
       );
     }
+    logActivitySheetVerified = true;
   } catch (err) {
     console.warn('Could not auto-create Log Activity sheet:', err);
   }
