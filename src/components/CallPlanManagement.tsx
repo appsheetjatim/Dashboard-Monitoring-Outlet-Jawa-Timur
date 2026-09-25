@@ -66,6 +66,8 @@ export const CallPlanManagement: React.FC = () => {
   const [modalW3, setModalW3] = useState(true);
   const [modalW4, setModalW4] = useState(true);
   const [modalFreq, setModalFreq] = useState(4);
+  const [modalOutletSearch, setModalOutletSearch] = useState('');
+  const [showModalOutletSuggestions, setShowModalOutletSuggestions] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
 
   const [importResult, setImportResult] = useState<{
@@ -233,6 +235,8 @@ export const CallPlanManagement: React.FC = () => {
     setModalMds(plan.namaMds);
     setModalOutletCode(plan.customerSoGroupAreaCode);
     setModalOutletName(plan.customerSoGroupArea);
+    setModalOutletSearch(plan.customerSoGroupArea);
+    setShowModalOutletSuggestions(false);
     setModalRing(plan.klasifikasiOutlet);
     setModalKabupaten(plan.kabupaten);
     setModalKecamatan(plan.kecamatan);
@@ -246,14 +250,52 @@ export const CallPlanManagement: React.FC = () => {
     setIsModalOpen(true);
   };
 
+  // Outlets a PIC can assign — respects the same Depo access restriction as
+  // everywhere else, and only Mapping records that are Active.
+  const modalOutletPool = useMemo(() => {
+    return mappings.filter((m) => {
+      if (m.status !== 'Active') return false;
+      if (!isManager && accessibleDepo.length > 0) {
+        return accessibleDepo.includes(m.depoBsp) || accessibleDepo.includes(m.subDistUdn);
+      }
+      return true;
+    });
+  }, [mappings, isManager, accessibleDepo]);
+
+  const modalOutletSuggestions = useMemo(() => {
+    const q = modalOutletSearch.trim().toLowerCase();
+    if (!q) return [];
+    return modalOutletPool
+      .filter(
+        (m) =>
+          m.customerSoGroupArea.toLowerCase().includes(q) ||
+          m.customerSoGroupAreaCode.toLowerCase().includes(q)
+      )
+      .slice(0, 8);
+  }, [modalOutletPool, modalOutletSearch]);
+
+  // Selecting an outlet from search is the ONLY way Code/Ring/Address get
+  // set now — they always come straight from that outlet's own Mapping
+  // record, so they can never drift out of sync with a typo-prone manual edit.
+  const handleSelectModalOutlet = (mapping: OutletMapping) => {
+    setModalOutletName(mapping.customerSoGroupArea);
+    setModalOutletSearch(mapping.customerSoGroupArea);
+    setModalOutletCode(mapping.customerSoGroupAreaCode);
+    setModalRing(mapping.klasifikasiOutlet);
+    setModalKabupaten(mapping.kabupaten);
+    setModalKecamatan(mapping.kecamatan);
+    setModalAlamat(mapping.alamat);
+    setShowModalOutletSuggestions(false);
+  };
+
   const handleSaveModal = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!modalMds) {
       setModalError('Silakan pilih nama petugas MDS.');
       return;
     }
-    if (!modalOutletName) {
-      setModalError('Nama outlet tidak boleh kosong.');
+    if (!modalOutletCode) {
+      setModalError('Silakan pilih outlet dari daftar hasil pencarian.');
       return;
     }
     if (!editingId) return; // this modal is edit-only now
@@ -465,8 +507,11 @@ export const CallPlanManagement: React.FC = () => {
     outletCount: number;
     totalAvgSales: number;
     totalSkuPerMonth: number;
+    totalSku: number;
+    totalAvgPa: number;
     lineRo: number;
     avgPa: number;
+    percentPa: number;
     dormanCount: number;
     dormanPercent: number;
     totalVisitsPerMonth: number;
@@ -536,8 +581,11 @@ export const CallPlanManagement: React.FC = () => {
         outletCount,
         totalAvgSales,
         totalSkuPerMonth,
+        totalSku,
+        totalAvgPa,
         lineRo: outletCount > 0 ? totalSku / outletCount : 0,
         avgPa: outletCount > 0 ? totalAvgPa / outletCount : 0,
+        percentPa: totalSku > 0 ? (totalAvgPa / totalSku) * 100 : 0,
         dormanCount,
         dormanPercent: outletCount > 0 ? (dormanCount / outletCount) * 100 : 0,
         totalVisitsPerMonth,
@@ -553,13 +601,23 @@ export const CallPlanManagement: React.FC = () => {
   const workloadTotals = useMemo(() => {
     const allUniqueCodes = new Set<string>();
     accessRestrictedCallPlans.forEach((i) => allUniqueCodes.add(i.customerSoGroupAreaCode));
+    const mdsCount = mdsWorkloadStats.length;
+    const outletCount = allUniqueCodes.size;
+    const totalAvgSales = mdsWorkloadStats.reduce((s, m) => s + m.totalAvgSales, 0);
+    const totalSkuPerMonth = mdsWorkloadStats.reduce((s, m) => s + m.totalSkuPerMonth, 0);
+    const totalSku = mdsWorkloadStats.reduce((s, m) => s + m.totalSku, 0);
     return {
-      mdsCount: mdsWorkloadStats.length,
-      outletCount: allUniqueCodes.size,
-      totalAvgSales: mdsWorkloadStats.reduce((s, m) => s + m.totalAvgSales, 0),
-      totalSkuPerMonth: mdsWorkloadStats.reduce((s, m) => s + m.totalSkuPerMonth, 0),
+      mdsCount,
+      outletCount,
+      totalAvgSales,
+      totalSkuPerMonth,
       totalVisitsPerMonth: mdsWorkloadStats.reduce((s, m) => s + m.totalVisitsPerMonth, 0),
       dormanCount: mdsWorkloadStats.reduce((s, m) => s + m.dormanCount, 0),
+      // Averaged across the team, to gauge whether workload looks balanced
+      avgOutletsPerMds: mdsCount > 0 ? outletCount / mdsCount : 0,
+      avgSalesPerOutlet: outletCount > 0 ? totalAvgSales / outletCount : 0,
+      totalLineRo: outletCount > 0 ? totalSku / outletCount : 0,
+      avgSkuPerMdsPerMonth: mdsCount > 0 ? totalSkuPerMonth / mdsCount : 0,
     };
   }, [accessRestrictedCallPlans, mdsWorkloadStats]);
 
@@ -795,7 +853,7 @@ export const CallPlanManagement: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Top Filter & Actions Bar */}
-      <div className="bg-white p-4 lg:p-5 rounded-2xl shadow-xs border border-slate-200">
+      <div className="print:hidden bg-white p-4 lg:p-5 rounded-2xl shadow-xs border border-slate-200">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-100">
           <div>
             <h2 className="text-lg font-bold text-slate-900">Call Plan Jadwal Kunjungan MDS</h2>
@@ -955,19 +1013,23 @@ export const CallPlanManagement: React.FC = () => {
       </div>
 
       {/* RINGKASAN BEBAN KERJA MDS */}
-        <div className="space-y-6">
+        <div className="print:hidden space-y-6">
           {/* Ringkasan Total */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5">
             <h3 className="font-bold text-sm text-slate-900 mb-1">Ringkasan Total Beban Kerja</h3>
             <p className="text-xs text-slate-500 mb-4">
               Gabungan semua MDS {!isManager && accessibleMds.length > 0 ? 'yang menjadi tanggung jawab Anda' : ''}
             </p>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
               {[
                 { label: 'Jumlah MDS', value: workloadTotals.mdsCount.toLocaleString('id-ID') },
                 { label: 'Toko Dicover', value: workloadTotals.outletCount.toLocaleString('id-ID') },
+                { label: 'Rata-rata Toko/MDS', value: workloadTotals.avgOutletsPerMds.toFixed(1) },
                 { label: 'Total Avg Sales', value: formatRupiahCompactCP(workloadTotals.totalAvgSales) },
+                { label: 'Avg Sales/Toko', value: formatRupiahCompactCP(workloadTotals.avgSalesPerOutlet) },
+                { label: 'Line/RO', value: workloadTotals.totalLineRo.toFixed(1) },
                 { label: 'SKU/Bulan Ditangani', value: workloadTotals.totalSkuPerMonth.toLocaleString('id-ID') },
+                { label: 'Rata-rata SKU/MDS/Bulan', value: workloadTotals.avgSkuPerMdsPerMonth.toFixed(0) },
                 { label: 'Total Kunjungan/Bulan', value: `${workloadTotals.totalVisitsPerMonth.toLocaleString('id-ID')}x` },
                 {
                   label: 'Toko Dorman',
@@ -1008,6 +1070,7 @@ export const CallPlanManagement: React.FC = () => {
                     <th className="py-3 px-3 text-center">SKU/Bulan</th>
                     <th className="py-3 px-3 text-center">Line/RO</th>
                     <th className="py-3 px-3 text-center">Avg PA</th>
+                    <th className="py-3 px-3 text-center">% PA</th>
                     <th className="py-3 px-3 text-center">Kunjungan/Bulan</th>
                     <th className="py-3 px-3 text-center">Avg/Toko</th>
                     <th className="py-3 px-3 text-center">Dorman</th>
@@ -1018,7 +1081,7 @@ export const CallPlanManagement: React.FC = () => {
                 <tbody className="divide-y divide-slate-100">
                   {mdsWorkloadStats.length === 0 ? (
                     <tr>
-                      <td colSpan={11} className="text-center py-8 text-slate-400">
+                      <td colSpan={12} className="text-center py-8 text-slate-400">
                         Belum ada Call Plan untuk dianalisis.
                       </td>
                     </tr>
@@ -1033,6 +1096,7 @@ export const CallPlanManagement: React.FC = () => {
                         <td className="py-3 px-3 text-center text-slate-700">{m.totalSkuPerMonth.toLocaleString('id-ID')}</td>
                         <td className="py-3 px-3 text-center text-slate-700">{m.lineRo.toFixed(1)}</td>
                         <td className="py-3 px-3 text-center text-indigo-600 font-semibold">{m.avgPa.toFixed(1)}</td>
+                        <td className="py-3 px-3 text-center text-slate-700">{m.percentPa.toFixed(0)}%</td>
                         <td className="py-3 px-3 text-center text-slate-700">{m.totalVisitsPerMonth}x</td>
                         <td className="py-3 px-3 text-center text-slate-700">{m.avgVisitsPerOutlet.toFixed(1)}x</td>
                         <td className="py-3 px-3 text-center">
@@ -1077,7 +1141,7 @@ export const CallPlanManagement: React.FC = () => {
 
       {/* ALERT: OUTLET RING 1 & 2 BELUM TERJADWAL */}
       {unscheduledOutlets.length > 0 && (
-        <div className="bg-amber-50/90 border border-amber-200 p-4 lg:p-5 rounded-2xl shadow-xs">
+        <div className="print:hidden bg-amber-50/90 border border-amber-200 p-4 lg:p-5 rounded-2xl shadow-xs">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center font-bold">
@@ -1124,6 +1188,15 @@ export const CallPlanManagement: React.FC = () => {
         </div>
       )}
 
+      {/* Print-only heading — Header/Sidebar are hidden when printing, so the
+          page needs its own context */}
+      <div className="hidden print:block mb-4">
+        <h1 className="text-lg font-bold text-slate-900">Jadwal Call Plan MDS</h1>
+        <p className="text-xs text-slate-500">
+          Dicetak: {new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })}
+        </p>
+      </div>
+
       {/* VIEW 1: TABLE VIEW */}
       {viewMode === 'table' ? (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
@@ -1147,15 +1220,18 @@ export const CallPlanManagement: React.FC = () => {
                   <th className="py-3 px-3">Petugas MDS</th>
                   <th className="py-3 px-3">Kode &amp; Nama Outlet</th>
                   <th className="py-3 px-3 text-center">Ring</th>
-                  <th className="py-3 px-3">Kecamatan / Kabupaten</th>
+                  <th className="py-3 px-3 text-right">Avg Sales</th>
+                  <th className="py-3 px-3 text-center">Line/RO</th>
+                  <th className="py-3 px-3 text-center">Avg PA</th>
+                  <th className="py-3 px-3 text-center">% PA</th>
                   <th className="py-3 px-3">Pola Kunjungan</th>
-                  <th className="py-3 px-3 text-center">Aksi</th>
+                  <th className="py-3 px-3 text-center print:hidden">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {tableGroupedByDay.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="text-center py-8 text-slate-400">
+                    <td colSpan={9} className="text-center py-8 text-slate-400">
                       Tidak ada call plan yang cocok dengan filter.
                     </td>
                   </tr>
@@ -1163,7 +1239,7 @@ export const CallPlanManagement: React.FC = () => {
                   tableGroupedByDay.map((group) => (
                     <React.Fragment key={group.day}>
                       <tr className={group.day === todayName ? 'bg-indigo-50/70' : 'bg-slate-50/70'}>
-                        <td colSpan={6} className="py-2 px-3">
+                        <td colSpan={9} className="py-2 px-3">
                           <div className="flex items-center gap-2">
                             <Calendar
                               className={`w-3.5 h-3.5 ${
@@ -1209,19 +1285,39 @@ export const CallPlanManagement: React.FC = () => {
                               <div className="text-[11px] font-mono text-slate-400">
                                 {plan.customerSoGroupAreaCode}
                               </div>
+                              <div className="text-[11px] text-slate-500 mt-0.5" title={plan.alamat}>
+                                {plan.kecamatan}, {plan.kabupaten}
+                              </div>
                             </td>
                             <td className="py-2.5 px-3 text-center">
                               <span className="font-bold text-[11px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-800">
                                 {plan.klasifikasiOutlet}
                               </span>
                             </td>
-                            <td className="py-2.5 px-3 text-slate-600" title={plan.alamat}>
-                              {plan.kecamatan}, {plan.kabupaten}
-                            </td>
+                            {(() => {
+                              const mapping = mappingByCode.get(plan.customerSoGroupAreaCode);
+                              const metrics = mapping
+                                ? getCombinedMetrics(mapping)
+                                : { avgSales: 0, sku: 0, avgPa: 0, percentPa: 0 };
+                              return (
+                                <>
+                                  <td className="py-2.5 px-3 text-right text-slate-700" title={formatRupiah(metrics.avgSales)}>
+                                    {formatRupiahCompactCP(metrics.avgSales)}
+                                  </td>
+                                  <td className="py-2.5 px-3 text-center text-slate-700">{metrics.sku}</td>
+                                  <td className="py-2.5 px-3 text-center text-indigo-600 font-semibold">
+                                    {metrics.avgPa.toFixed(1)}
+                                  </td>
+                                  <td className="py-2.5 px-3 text-center text-slate-700">
+                                    {metrics.percentPa.toFixed(0)}%
+                                  </td>
+                                </>
+                              );
+                            })()}
                             <td className="py-2.5 px-3">
                               <WeekPattern plan={plan} />
                             </td>
-                            <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                            <td className="py-2.5 px-3 text-center whitespace-nowrap print:hidden">
                               <button
                                 onClick={() => handleOpenEdit(plan)}
                                 className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50"
@@ -1383,18 +1479,57 @@ export const CallPlanManagement: React.FC = () => {
                 </select>
               </div>
 
-              <div>
+              <div className="relative">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Nama Outlet *
                 </label>
-                <input
-                  type="text"
-                  required
-                  value={modalOutletName}
-                  onChange={(e) => setModalOutletName(e.target.value)}
-                  placeholder="Contoh: TOKO BERKAH JAYA"
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-900"
-                />
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    required
+                    value={modalOutletSearch}
+                    onChange={(e) => {
+                      setModalOutletSearch(e.target.value);
+                      setShowModalOutletSuggestions(true);
+                      // Typing invalidates the previous selection — force
+                      // picking again from the list so Code/Ring/Alamat
+                      // never end up mismatched with the typed name.
+                      setModalOutletCode('');
+                    }}
+                    onFocus={() => setShowModalOutletSuggestions(true)}
+                    onBlur={() => setTimeout(() => setShowModalOutletSuggestions(false), 150)}
+                    placeholder="Cari nama/kode outlet..."
+                    className="w-full pl-8 pr-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+                {showModalOutletSuggestions && modalOutletSuggestions.length > 0 && (
+                  <div className="absolute z-20 mt-1 w-full max-h-56 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg py-1">
+                    {modalOutletSuggestions.map((m) => (
+                      <button
+                        type="button"
+                        key={m.customerSoGroupAreaCode}
+                        onMouseDown={() => handleSelectModalOutlet(m)}
+                        className="w-full text-left px-3 py-2 text-xs hover:bg-indigo-50 flex items-center justify-between gap-2"
+                      >
+                        <div className="min-w-0">
+                          <p className="font-bold text-slate-900 truncate">{m.customerSoGroupArea}</p>
+                          <p className="text-[11px] text-slate-400 font-mono truncate">
+                            {m.customerSoGroupAreaCode}
+                          </p>
+                        </div>
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 shrink-0">
+                          {m.klasifikasiOutlet}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {!modalOutletCode && modalOutletSearch.trim() && !showModalOutletSuggestions && (
+                  <p className="text-[11px] text-rose-600 mt-1">
+                    Pilih outlet dari daftar hasil pencarian.
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -1405,9 +1540,9 @@ export const CallPlanManagement: React.FC = () => {
                   <input
                     type="text"
                     value={modalOutletCode}
-                    onChange={(e) => setModalOutletCode(e.target.value)}
-                    placeholder="JWTM-..."
-                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-mono"
+                    disabled
+                    placeholder="Otomatis terisi setelah pilih outlet"
+                    className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-xl text-xs font-mono text-slate-500 cursor-not-allowed"
                   />
                 </div>
 
@@ -1415,16 +1550,12 @@ export const CallPlanManagement: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Klasifikasi
                   </label>
-                  <select
+                  <input
+                    type="text"
                     value={modalRing}
-                    onChange={(e) => setModalRing(e.target.value as any)}
-                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs"
-                  >
-                    <option value="Ring 1">Ring 1</option>
-                    <option value="Ring 2">Ring 2</option>
-                    <option value="Ring 3">Ring 3</option>
-                    <option value="Ring 4">Ring 4</option>
-                  </select>
+                    disabled
+                    className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-xl text-xs text-slate-500 cursor-not-allowed"
+                  />
                 </div>
               </div>
 
@@ -1433,8 +1564,8 @@ export const CallPlanManagement: React.FC = () => {
                 <input
                   type="text"
                   value={modalAlamat}
-                  onChange={(e) => setModalAlamat(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs"
+                  disabled
+                  className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-xl text-xs text-slate-500 cursor-not-allowed"
                 />
               </div>
 

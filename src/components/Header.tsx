@@ -41,7 +41,7 @@ export const Header: React.FC<HeaderProps> = ({ onToggleMobileMenu }) => {
 
   return (
     <>
-      <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200 px-4 lg:px-6 py-3">
+      <header className="print:hidden sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200 px-4 lg:px-6 py-3">
         <div className="flex items-center justify-between gap-4 max-w-7xl mx-auto">
           {/* Left: Mobile Toggle & Brand */}
           <div className="flex items-center gap-3">
