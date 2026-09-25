@@ -80,51 +80,75 @@ interface AppContextType {
 
 const AppContext = createContext<AppContextType | null>(null);
 
+// Reads and parses a JSON array from localStorage, falling back to an empty
+// array on ANY failure — missing key, corrupted/invalid JSON (e.g. left over
+// from an older version of this app with a different data shape), or a
+// quota/access error. Without this guard, a single bad cache entry throws
+// during the very first render of AppProvider and crashes the whole app with
+// no way to recover except manually clearing browser storage.
+function safeParseArray<T>(key: string): T[] {
+  try {
+    const saved = localStorage.getItem(key);
+    if (!saved) return [];
+    const parsed = JSON.parse(saved);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    console.warn(`Failed to parse cached "${key}", resetting it:`, e);
+    localStorage.removeItem(key);
+    return [];
+  }
+}
+
+// Writes a value to localStorage, silently skipping (instead of crashing the
+// whole app) if it fails — most commonly QuotaExceededError, since
+// localStorage typically caps out around 5-10MB per origin and a dataset
+// like raw Performance (tens of thousands of rows) can exceed that on its
+// own. When that happens, the affected dataset just won't survive a browser
+// restart and will need a fresh sync next time — annoying, but not a crash.
+function safeSetCache(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (e) {
+    console.warn(`Failed to cache "${key}" (likely storage quota exceeded), skipping:`, e);
+  }
+}
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Core Data States — load from localStorage cache (real data from a
   // previous sync) or EMPTY. Never fall back to demo/seed data: an empty
   // array is the honest signal "not connected to the database yet", and the
   // top-level app gate (App.tsx) uses that signal to block access until a
   // real sync succeeds.
-  const [userPics, setUserPics] = useState<UserPIC[]>(() => {
-    const saved = localStorage.getItem('pic_users_cache');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [userPics, setUserPics] = useState<UserPIC[]>(() => safeParseArray<UserPIC>('pic_users_cache'));
 
-  const [userMds, setUserMds] = useState<UserMDS[]>(() => {
-    const saved = localStorage.getItem('mds_users_cache');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [userMds, setUserMds] = useState<UserMDS[]>(() => safeParseArray<UserMDS>('mds_users_cache'));
 
-  const [distAssignments, setDistAssignments] = useState<DistAssignment[]>(() => {
-    const saved = localStorage.getItem('dist_assignments_cache');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [distAssignments, setDistAssignments] = useState<DistAssignment[]>(() =>
+    safeParseArray<DistAssignment>('dist_assignments_cache')
+  );
 
-  const [kabAssignments, setKabAssignments] = useState<KabAssignment[]>(() => {
-    const saved = localStorage.getItem('kab_assignments_cache');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [kabAssignments, setKabAssignments] = useState<KabAssignment[]>(() =>
+    safeParseArray<KabAssignment>('kab_assignments_cache')
+  );
 
-  const [rawPerformance, setRawPerformance] = useState<OutletPerformance[]>(() => {
-    const saved = localStorage.getItem('performance_raw_cache');
-    return saved ? JSON.parse(saved) : [];
-  });
+  // Performance is deliberately NOT cached to localStorage — with tens of
+  // thousands of rows it serializes to 30-50MB+, far beyond the ~5-10MB
+  // quota most browsers give a single origin, so every attempt to store it
+  // would just fail anyway (silently, thanks to safeSetCache, but still
+  // wasted work). It always starts empty and needs a fresh sync each new
+  // browser session — Gate 1 in App.tsx already handles that gracefully.
+  // Also clean up any stale copy from before this change, freeing up quota
+  // headroom for the caches that DO need to persist reliably.
+  useEffect(() => {
+    localStorage.removeItem('performance_raw_cache');
+  }, []);
+  const [rawPerformance, setRawPerformance] = useState<OutletPerformance[]>([]);
 
-  const [mappings, setMappings] = useState<OutletMapping[]>(() => {
-    const saved = localStorage.getItem('mappings_cache');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [mappings, setMappings] = useState<OutletMapping[]>(() => safeParseArray<OutletMapping>('mappings_cache'));
 
-  const [callPlans, setCallPlans] = useState<CallPlanItem[]>(() => {
-    const saved = localStorage.getItem('call_plans_cache');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [callPlans, setCallPlans] = useState<CallPlanItem[]>(() => safeParseArray<CallPlanItem>('call_plans_cache'));
 
-  const [logs, setLogs] = useState<LogActivityRecord[]>(() => {
-    const saved = localStorage.getItem('logs_cache');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [logs, setLogs] = useState<LogActivityRecord[]>(() => safeParseArray<LogActivityRecord>('logs_cache'));
 
   // The single authoritative signal for "has a genuine full sync ever
   // completed?" — set ONLY inside syncWithGoogleSheetsInternal, and ONLY
@@ -175,41 +199,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [rawPerformance, mappings]);
 
   // Persist local state caches
+  // (rawPerformance is intentionally excluded — see its declaration above)
   useEffect(() => {
-    localStorage.setItem('performance_raw_cache', JSON.stringify(rawPerformance));
-  }, [rawPerformance]);
-
-  useEffect(() => {
-    localStorage.setItem('mds_users_cache', JSON.stringify(userMds));
+    safeSetCache('mds_users_cache', userMds);
   }, [userMds]);
 
   useEffect(() => {
-    localStorage.setItem('dist_assignments_cache', JSON.stringify(distAssignments));
+    safeSetCache('dist_assignments_cache', distAssignments);
   }, [distAssignments]);
 
   useEffect(() => {
-    localStorage.setItem('kab_assignments_cache', JSON.stringify(kabAssignments));
+    safeSetCache('kab_assignments_cache', kabAssignments);
   }, [kabAssignments]);
 
   useEffect(() => {
-    localStorage.setItem('mappings_cache', JSON.stringify(mappings));
+    safeSetCache('mappings_cache', mappings);
   }, [mappings]);
 
   useEffect(() => {
-    localStorage.setItem('call_plans_cache', JSON.stringify(callPlans));
+    safeSetCache('call_plans_cache', callPlans);
   }, [callPlans]);
 
   useEffect(() => {
-    localStorage.setItem('logs_cache', JSON.stringify(logs));
+    safeSetCache('logs_cache', logs);
   }, [logs]);
 
   useEffect(() => {
-    localStorage.setItem('pic_users_cache', JSON.stringify(userPics));
+    safeSetCache('pic_users_cache', userPics);
   }, [userPics]);
 
   useEffect(() => {
     if (currentUser) {
-      localStorage.setItem('pic_session', JSON.stringify(currentUser));
+      safeSetCache('pic_session', currentUser);
     } else {
       localStorage.removeItem('pic_session');
     }
@@ -372,7 +393,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // sync where e.g. only userPics loaded but performance didn't.
       if (sheetsData.performance !== null && sheetsData.userPics !== null) {
         setHasEverSynced(true);
-        localStorage.setItem('has_synced_once', 'true');
+        try {
+          localStorage.setItem('has_synced_once', 'true');
+        } catch (e) {
+          console.warn('Failed to persist has_synced_once flag:', e);
+        }
       }
 
       setSyncStatus('synced');

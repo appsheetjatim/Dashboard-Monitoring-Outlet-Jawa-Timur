@@ -433,6 +433,136 @@ export const CallPlanManagement: React.FC = () => {
     };
   };
 
+  const formatRupiah = (val: number) => 'Rp ' + Math.round(val).toLocaleString('id-ID');
+
+  // Compact currency format for narrow table cells — mirrors the same
+  // helper used in PerformanceDashboard.tsx.
+  const formatRupiahCompactCP = (val: number) => {
+    const abs = Math.abs(val);
+    if (abs >= 1_000_000_000) return 'Rp ' + (val / 1_000_000_000).toFixed(1) + 'M';
+    if (abs >= 1_000_000) return 'Rp ' + (val / 1_000_000).toFixed(1) + 'Jt';
+    if (abs >= 1_000) return 'Rp ' + (val / 1_000).toFixed(1) + 'rb';
+    return 'Rp ' + Math.round(val).toLocaleString('id-ID');
+  };
+
+  const mappingByCode = useMemo(() => {
+    const map = new Map<string, OutletMapping>();
+    mappings.forEach((m) => map.set(m.customerSoGroupAreaCode, m));
+    return map;
+  }, [mappings]);
+
+  // Access-restricted (but NOT narrowed by the ad-hoc MDS/Day/Week/search
+  // selectors) — the workload summary needs the full team picture to
+  // actually compare load ACROSS MDS, not just whichever one is filtered.
+  const accessRestrictedCallPlans = useMemo(() => {
+    if (isManager || accessibleMds.length === 0) return callPlans;
+    const myMdsNames = accessibleMds.map((m) => m.namaMds.toLowerCase());
+    return callPlans.filter((item) => myMdsNames.includes(item.namaMds.toLowerCase()));
+  }, [callPlans, isManager, accessibleMds]);
+
+  interface MdsWorkloadStat {
+    namaMds: string;
+    outletCount: number;
+    totalAvgSales: number;
+    totalSkuPerMonth: number;
+    lineRo: number;
+    avgPa: number;
+    dormanCount: number;
+    dormanPercent: number;
+    totalVisitsPerMonth: number;
+    avgVisitsPerOutlet: number;
+    ringCounts: Record<'Ring 1' | 'Ring 2' | 'Ring 3' | 'Ring 4', number>;
+    dayCounts: Record<string, number>;
+  }
+
+  // Workload per MDS — used to check whether headcount is balanced. Per-
+  // outlet metrics (Avg Sales, Line/RO, Avg PA, Dorman, Ring mix) are
+  // computed on DEDUPED outlets (an outlet visited on 2 different days by
+  // the same MDS shouldn't count itself twice there), while monthly-workload
+  // metrics (SKU/month, visit count, day spread) are summed per SCHEDULE
+  // ROW, since each row is a distinct recurring visit that adds real load.
+  const mdsWorkloadStats = useMemo(() => {
+    const byMds = new Map<string, CallPlanItem[]>();
+    accessRestrictedCallPlans.forEach((item) => {
+      if (!byMds.has(item.namaMds)) byMds.set(item.namaMds, []);
+      byMds.get(item.namaMds)!.push(item);
+    });
+
+    const stats: MdsWorkloadStat[] = [];
+    byMds.forEach((items, namaMds) => {
+      const uniqueCodes = Array.from(new Set(items.map((i) => i.customerSoGroupAreaCode)));
+      let totalAvgSales = 0;
+      let totalSku = 0;
+      let totalAvgPa = 0;
+      let dormanCount = 0;
+      const ringCounts: MdsWorkloadStat['ringCounts'] = {
+        'Ring 1': 0,
+        'Ring 2': 0,
+        'Ring 3': 0,
+        'Ring 4': 0,
+      };
+
+      uniqueCodes.forEach((code) => {
+        const mapping = mappingByCode.get(code);
+        if (!mapping) return;
+        const metrics = getCombinedMetrics(mapping);
+        totalAvgSales += metrics.avgSales;
+        totalSku += metrics.sku;
+        totalAvgPa += metrics.avgPa;
+
+        const bsp = mapping.bspCode1 ? performanceByCode.get(mapping.bspCode1) : undefined;
+        const udn = mapping.udnCode1 ? performanceByCode.get(mapping.udnCode1) : undefined;
+        if (bsp?.isDormant || udn?.isDormant) dormanCount += 1;
+
+        if (mapping.klasifikasiOutlet in ringCounts) {
+          ringCounts[mapping.klasifikasiOutlet as keyof typeof ringCounts] += 1;
+        }
+      });
+
+      let totalSkuPerMonth = 0;
+      let totalVisitsPerMonth = 0;
+      const dayCounts: Record<string, number> = {};
+      items.forEach((item) => {
+        const mapping = mappingByCode.get(item.customerSoGroupAreaCode);
+        const sku = mapping ? getCombinedMetrics(mapping).sku : 0;
+        totalSkuPerMonth += sku * item.frequency;
+        totalVisitsPerMonth += item.frequency;
+        dayCounts[item.visitDay] = (dayCounts[item.visitDay] || 0) + 1;
+      });
+
+      const outletCount = uniqueCodes.length;
+      stats.push({
+        namaMds,
+        outletCount,
+        totalAvgSales,
+        totalSkuPerMonth,
+        lineRo: outletCount > 0 ? totalSku / outletCount : 0,
+        avgPa: outletCount > 0 ? totalAvgPa / outletCount : 0,
+        dormanCount,
+        dormanPercent: outletCount > 0 ? (dormanCount / outletCount) * 100 : 0,
+        totalVisitsPerMonth,
+        avgVisitsPerOutlet: outletCount > 0 ? totalVisitsPerMonth / outletCount : 0,
+        ringCounts,
+        dayCounts,
+      });
+    });
+
+    return stats.sort((a, b) => b.outletCount - a.outletCount);
+  }, [accessRestrictedCallPlans, mappingByCode, performanceByCode]);
+
+  const workloadTotals = useMemo(() => {
+    const allUniqueCodes = new Set<string>();
+    accessRestrictedCallPlans.forEach((i) => allUniqueCodes.add(i.customerSoGroupAreaCode));
+    return {
+      mdsCount: mdsWorkloadStats.length,
+      outletCount: allUniqueCodes.size,
+      totalAvgSales: mdsWorkloadStats.reduce((s, m) => s + m.totalAvgSales, 0),
+      totalSkuPerMonth: mdsWorkloadStats.reduce((s, m) => s + m.totalSkuPerMonth, 0),
+      totalVisitsPerMonth: mdsWorkloadStats.reduce((s, m) => s + m.totalVisitsPerMonth, 0),
+      dormanCount: mdsWorkloadStats.reduce((s, m) => s + m.dormanCount, 0),
+    };
+  }, [accessRestrictedCallPlans, mdsWorkloadStats]);
+
   const wizardSelectedMappings = useMemo(() => {
     return wizardSelectedCodes
       .map((code) => mappings.find((m) => m.customerSoGroupAreaCode === code))
@@ -823,6 +953,127 @@ export const CallPlanManagement: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* RINGKASAN BEBAN KERJA MDS */}
+        <div className="space-y-6">
+          {/* Ringkasan Total */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5">
+            <h3 className="font-bold text-sm text-slate-900 mb-1">Ringkasan Total Beban Kerja</h3>
+            <p className="text-xs text-slate-500 mb-4">
+              Gabungan semua MDS {!isManager && accessibleMds.length > 0 ? 'yang menjadi tanggung jawab Anda' : ''}
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+              {[
+                { label: 'Jumlah MDS', value: workloadTotals.mdsCount.toLocaleString('id-ID') },
+                { label: 'Toko Dicover', value: workloadTotals.outletCount.toLocaleString('id-ID') },
+                { label: 'Total Avg Sales', value: formatRupiahCompactCP(workloadTotals.totalAvgSales) },
+                { label: 'SKU/Bulan Ditangani', value: workloadTotals.totalSkuPerMonth.toLocaleString('id-ID') },
+                { label: 'Total Kunjungan/Bulan', value: `${workloadTotals.totalVisitsPerMonth.toLocaleString('id-ID')}x` },
+                {
+                  label: 'Toko Dorman',
+                  value: workloadTotals.dormanCount.toLocaleString('id-ID'),
+                  alert: workloadTotals.dormanCount > 0,
+                },
+              ].map((stat) => (
+                <div
+                  key={stat.label}
+                  className={`p-3 rounded-xl border ${
+                    stat.alert ? 'bg-rose-50 border-rose-200' : 'bg-slate-50 border-slate-100'
+                  }`}
+                >
+                  <p className="text-[11px] text-slate-500">{stat.label}</p>
+                  <p className={`text-sm font-bold mt-0.5 ${stat.alert ? 'text-rose-700' : 'text-slate-900'}`}>
+                    {stat.value}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Tabel per MDS */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+            <div className="p-4 border-b border-slate-100">
+              <h3 className="font-bold text-sm text-slate-900">Beban Kerja per MDS</h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Bandingkan angka antar baris untuk cek apakah penugasan sudah seimbang
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
+                    <th className="py-3 px-3">MDS</th>
+                    <th className="py-3 px-3 text-center">Toko</th>
+                    <th className="py-3 px-3 text-right">Avg Sales</th>
+                    <th className="py-3 px-3 text-center">SKU/Bulan</th>
+                    <th className="py-3 px-3 text-center">Line/RO</th>
+                    <th className="py-3 px-3 text-center">Avg PA</th>
+                    <th className="py-3 px-3 text-center">Kunjungan/Bulan</th>
+                    <th className="py-3 px-3 text-center">Avg/Toko</th>
+                    <th className="py-3 px-3 text-center">Dorman</th>
+                    <th className="py-3 px-3">Ring</th>
+                    <th className="py-3 px-3">Sebaran Hari</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {mdsWorkloadStats.length === 0 ? (
+                    <tr>
+                      <td colSpan={11} className="text-center py-8 text-slate-400">
+                        Belum ada Call Plan untuk dianalisis.
+                      </td>
+                    </tr>
+                  ) : (
+                    mdsWorkloadStats.map((m) => (
+                      <tr key={m.namaMds} className="hover:bg-slate-50">
+                        <td className="py-3 px-3 font-bold text-slate-900">{m.namaMds}</td>
+                        <td className="py-3 px-3 text-center font-semibold text-slate-800">{m.outletCount}</td>
+                        <td className="py-3 px-3 text-right font-bold text-slate-900" title={formatRupiah(m.totalAvgSales)}>
+                          {formatRupiahCompactCP(m.totalAvgSales)}
+                        </td>
+                        <td className="py-3 px-3 text-center text-slate-700">{m.totalSkuPerMonth.toLocaleString('id-ID')}</td>
+                        <td className="py-3 px-3 text-center text-slate-700">{m.lineRo.toFixed(1)}</td>
+                        <td className="py-3 px-3 text-center text-indigo-600 font-semibold">{m.avgPa.toFixed(1)}</td>
+                        <td className="py-3 px-3 text-center text-slate-700">{m.totalVisitsPerMonth}x</td>
+                        <td className="py-3 px-3 text-center text-slate-700">{m.avgVisitsPerOutlet.toFixed(1)}x</td>
+                        <td className="py-3 px-3 text-center">
+                          {m.dormanCount > 0 ? (
+                            <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 font-bold text-[11px]">
+                              {m.dormanCount} ({m.dormanPercent.toFixed(0)}%)
+                            </span>
+                          ) : (
+                            <span className="text-emerald-600 font-semibold">0</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-3 whitespace-nowrap">
+                          <div className="flex items-center gap-1">
+                            <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                              R1:{m.ringCounts['Ring 1']}
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 text-[10px] font-bold">
+                              R2:{m.ringCounts['Ring 2']}
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-bold">
+                              R3:{m.ringCounts['Ring 3']}
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 text-[10px] font-bold">
+                              R4:{m.ringCounts['Ring 4']}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="py-3 px-3 whitespace-nowrap text-[11px] text-slate-500">
+                          {daysOfWeek
+                            .filter((d) => m.dayCounts[d])
+                            .map((d) => `${d.slice(0, 3)} ${m.dayCounts[d]}`)
+                            .join(' • ') || '-'}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
 
       {/* ALERT: OUTLET RING 1 & 2 BELUM TERJADWAL */}
       {unscheduledOutlets.length > 0 && (
