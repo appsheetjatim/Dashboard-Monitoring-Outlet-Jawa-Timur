@@ -74,9 +74,23 @@ export const PerformanceDashboard: React.FC<Props> = ({
     'overview' | 'pareto' | 'gainers' | 'coverage' | 'watchlist' | 'mds_leaderboard'
   >('overview');
 
-  // Pagination for Tabel Detail Outlet
-  const PAGE_SIZE = 50;
+  // Pagination for Tabel Detail Outlet — selectable page size (10/25/50),
+  // shared across all paginated tables on this page (Termapping, Belum
+  // Termapping per Depo, Coverage, Watchlist).
+  const [pageSize, setPageSize] = useState<number>(50);
   const [currentPage, setCurrentPage] = useState<number>(1);
+
+  // Changing how many rows show per page shifts what "page 3" even means,
+  // so land back on page 1 everywhere rather than risk landing on a now
+  // out-of-range page.
+  useEffect(() => {
+    setCurrentPage(1);
+    setCoveragePage(1);
+    setWatchlistPage(1);
+    setMappedPage(1);
+    setUnmappedDepoPages({});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageSize]);
 
   // Pagination for Coverage MDS vs Call Plan and Watchlist Dorman tables
   const [coveragePage, setCoveragePage] = useState<number>(1);
@@ -550,16 +564,16 @@ export const PerformanceDashboard: React.FC<Props> = ({
   }, [enrichedOutlets]);
 
   // Pagination slices for both tables
-  const coverageTotalPages = Math.max(1, Math.ceil(coverageData.length / PAGE_SIZE));
+  const coverageTotalPages = Math.max(1, Math.ceil(coverageData.length / pageSize));
   const paginatedCoverageData = useMemo(() => {
-    const start = (coveragePage - 1) * PAGE_SIZE;
-    return coverageData.slice(start, start + PAGE_SIZE);
+    const start = (coveragePage - 1) * pageSize;
+    return coverageData.slice(start, start + pageSize);
   }, [coverageData, coveragePage]);
 
-  const watchlistTotalPages = Math.max(1, Math.ceil(watchlistItems.length / PAGE_SIZE));
+  const watchlistTotalPages = Math.max(1, Math.ceil(watchlistItems.length / pageSize));
   const paginatedWatchlistItems = useMemo(() => {
-    const start = (watchlistPage - 1) * PAGE_SIZE;
-    return watchlistItems.slice(start, start + PAGE_SIZE);
+    const start = (watchlistPage - 1) * pageSize;
+    return watchlistItems.slice(start, start + pageSize);
   }, [watchlistItems, watchlistPage]);
 
   // Reset to page 1 / collapsed whenever the underlying filtered data changes
@@ -720,9 +734,9 @@ export const PerformanceDashboard: React.FC<Props> = ({
       if (as > bs) return mappedSortDirection === 'asc' ? 1 : -1;
       return 0;
     });
-    const totalP = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
-    const start = (page - 1) * PAGE_SIZE;
-    const pageItems = rows.slice(start, start + PAGE_SIZE);
+    const totalP = Math.max(1, Math.ceil(rows.length / pageSize));
+    const start = (page - 1) * pageSize;
+    const pageItems = rows.slice(start, start + pageSize);
 
     return (
       <>
@@ -905,7 +919,7 @@ export const PerformanceDashboard: React.FC<Props> = ({
         {rows.length > 0 && (
           <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 text-xs text-slate-600">
             <span>
-              Showing {start + 1}–{Math.min(page * PAGE_SIZE, rows.length)} of{' '}
+              Showing {start + 1}–{Math.min(page * pageSize, rows.length)} of{' '}
               {rows.length.toLocaleString('id-ID')} outlets
             </span>
             <div className="flex items-center gap-1.5">
@@ -968,9 +982,9 @@ export const PerformanceDashboard: React.FC<Props> = ({
       if (as > bs) return sortDirection === 'asc' ? 1 : -1;
       return 0;
     });
-    const totalP = Math.max(1, Math.ceil(outlets.length / PAGE_SIZE));
-    const start = (page - 1) * PAGE_SIZE;
-    const pageItems = outlets.slice(start, start + PAGE_SIZE);
+    const totalP = Math.max(1, Math.ceil(outlets.length / pageSize));
+    const start = (page - 1) * pageSize;
+    const pageItems = outlets.slice(start, start + pageSize);
 
     return (
       <>
@@ -1114,7 +1128,7 @@ export const PerformanceDashboard: React.FC<Props> = ({
         {outlets.length > 0 && (
           <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 text-xs text-slate-600">
             <span>
-              Showing {start + 1}–{Math.min(page * PAGE_SIZE, outlets.length)} of{' '}
+              Showing {start + 1}–{Math.min(page * pageSize, outlets.length)} of{' '}
               {outlets.length.toLocaleString('id-ID')} outlets
             </span>
             <div className="flex items-center gap-1.5">
@@ -1275,6 +1289,25 @@ export const PerformanceDashboard: React.FC<Props> = ({
                   }`}
                 >
                   Tahun {year}
+                </button>
+              ))}
+            </div>
+
+            {/* Rows-per-page Selector — shared by Termapping, Belum
+                Termapping per Depo, Coverage, and Watchlist tables below */}
+            <div className="inline-flex items-center gap-1.5 rounded-xl bg-slate-100 p-1 text-xs font-semibold">
+              <span className="pl-2 text-slate-500">Baris/halaman:</span>
+              {[10, 25, 50].map((size) => (
+                <button
+                  key={size}
+                  onClick={() => setPageSize(size)}
+                  className={`px-2.5 py-1.5 rounded-lg transition-all ${
+                    pageSize === size
+                      ? 'bg-white text-indigo-600 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  {size}
                 </button>
               ))}
             </div>
@@ -1938,8 +1971,8 @@ export const PerformanceDashboard: React.FC<Props> = ({
           {coverageData.length > 0 && (
             <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 text-xs text-slate-600">
               <span>
-                Showing {(coveragePage - 1) * PAGE_SIZE + 1}
-                –{Math.min(coveragePage * PAGE_SIZE, coverageData.length)} of{' '}
+                Showing {(coveragePage - 1) * pageSize + 1}
+                –{Math.min(coveragePage * pageSize, coverageData.length)} of{' '}
                 {coverageData.length.toLocaleString('id-ID')} outlets
               </span>
               <div className="flex items-center gap-1.5">
@@ -2052,8 +2085,8 @@ export const PerformanceDashboard: React.FC<Props> = ({
           {watchlistItems.length > 0 && (
             <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 text-xs text-slate-600">
               <span>
-                Showing {(watchlistPage - 1) * PAGE_SIZE + 1}
-                –{Math.min(watchlistPage * PAGE_SIZE, watchlistItems.length)} of{' '}
+                Showing {(watchlistPage - 1) * pageSize + 1}
+                –{Math.min(watchlistPage * pageSize, watchlistItems.length)} of{' '}
                 {watchlistItems.length.toLocaleString('id-ID')} outlets
               </span>
               <div className="flex items-center gap-1.5">

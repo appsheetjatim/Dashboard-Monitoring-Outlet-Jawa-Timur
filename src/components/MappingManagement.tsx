@@ -212,14 +212,20 @@ export const MappingManagement: React.FC = () => {
     });
   }, [filteredMappings, mapSortField, mapSortDirection]);
 
-  // Pagination for Daftar Mapping Outlet table
-  const MAPPING_PAGE_SIZE = 50;
+  // Pagination for Daftar Mapping Outlet table — selectable page size (10/25/50)
+  const [mappingPageSize, setMappingPageSize] = useState(50);
   const [mappingPage, setMappingPage] = useState(1);
-  const mappingTotalPages = Math.max(1, Math.ceil(sortedMappings.length / MAPPING_PAGE_SIZE));
+  const mappingTotalPages = Math.max(1, Math.ceil(sortedMappings.length / mappingPageSize));
   const paginatedMappings = useMemo(() => {
-    const start = (mappingPage - 1) * MAPPING_PAGE_SIZE;
-    return sortedMappings.slice(start, start + MAPPING_PAGE_SIZE);
-  }, [sortedMappings, mappingPage]);
+    const start = (mappingPage - 1) * mappingPageSize;
+    return sortedMappings.slice(start, start + mappingPageSize);
+  }, [sortedMappings, mappingPage, mappingPageSize]);
+
+  // Land back on page 1 when the page size changes, so we don't end up on
+  // a now out-of-range page.
+  useEffect(() => {
+    setMappingPage(1);
+  }, [mappingPageSize]);
 
   // Reset to page 1 whenever filters, search, or sort change
   useEffect(() => {
@@ -1195,10 +1201,26 @@ export const MappingManagement: React.FC = () => {
 
       {/* Mappings Table */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-        <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+        <div className="p-4 border-b border-slate-100 flex items-center justify-between flex-wrap gap-2">
           <h3 className="font-bold text-sm text-slate-800">
             Daftar Mapping Outlet &amp; Sarana POSM ({filteredMappings.length} Terdata)
           </h3>
+          <div className="inline-flex items-center gap-1.5 rounded-xl bg-slate-100 p-1 text-xs font-semibold">
+            <span className="pl-2 text-slate-500">Baris/halaman:</span>
+            {[10, 25, 50].map((size) => (
+              <button
+                key={size}
+                onClick={() => setMappingPageSize(size)}
+                className={`px-2.5 py-1.5 rounded-lg transition-all ${
+                  mappingPageSize === size
+                    ? 'bg-white text-indigo-600 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                {size}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -1405,8 +1427,8 @@ export const MappingManagement: React.FC = () => {
         {sortedMappings.length > 0 && (
           <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 text-xs text-slate-600">
             <span>
-              Menampilkan {(mappingPage - 1) * MAPPING_PAGE_SIZE + 1}
-              –{Math.min(mappingPage * MAPPING_PAGE_SIZE, sortedMappings.length)} dari{' '}
+              Menampilkan {(mappingPage - 1) * mappingPageSize + 1}
+              –{Math.min(mappingPage * mappingPageSize, sortedMappings.length)} dari{' '}
               {sortedMappings.length.toLocaleString('id-ID')} outlet
             </span>
             <div className="flex items-center gap-1.5">
