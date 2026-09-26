@@ -295,7 +295,7 @@ export const MappingManagement: React.FC = () => {
   }, [filteredMappings, mapSortField, mapSortDirection]);
 
   // Pagination for Daftar Mapping Outlet table — selectable page size (10/25/50)
-  const [mappingPageSize, setMappingPageSize] = useState(50);
+  const [mappingPageSize, setMappingPageSize] = useState(10);
   const [mappingPage, setMappingPage] = useState(1);
   const mappingTotalPages = Math.max(1, Math.ceil(sortedMappings.length / mappingPageSize));
   const paginatedMappings = useMemo(() => {
@@ -530,6 +530,55 @@ export const MappingManagement: React.FC = () => {
   // surface outlets that are actually still available to map, and (like
   // every other outlet picker in this app) a Supervisor only sees outlets
   // within their own accessible Depo.
+  // Fast O(1) lookup of a Performance record by its own code — used to show
+  // per-distributor Performance metrics (SKU/PA/%PA/Avg Sales/F12/F3) next
+  // to each Mapping row without re-scanning the whole dataset per row.
+  const performanceByCode = useMemo(() => {
+    const map = new Map<string, OutletPerformance>();
+    performance.forEach((p) => map.set(p.kodeCustNfiGroup, p));
+    return map;
+  }, [performance]);
+
+  // Ring 1 is a Mapping-Active override — an outlet actively mapped is Ring 1
+  // regardless of what its own Performance-calculated ring would say, while
+  // Ring 2/3/4 outlets may or may not be mapped and just keep their own
+  // calculated ring. This maps every code referenced by an active mapping to
+  // that mapping's Ring, so the Line/RO benchmark below uses the outlet's
+  // TRUE ring rather than each side's raw (pre-override) calculated ring.
+  const codeToMappingRing = useMemo(() => {
+    const map = new Map<string, string>();
+    mappings
+      .filter((m) => m.status === 'Active')
+      .forEach((m) => {
+        [m.bspCode1, m.bspCode2, m.bspCode3, m.udnCode1, m.udnCode2, m.udnCode3].forEach((code) => {
+          if (code) map.set(code, m.klasifikasiOutlet);
+        });
+      });
+    return map;
+  }, [mappings]);
+
+  // Line/RO per (Depo, Ring) — Total SKU of that Depo+Ring group divided by
+  // its outlet count. Each Performance row (one per code, BSP and UDN sides
+  // counted separately since they can sit in different Depo) contributes
+  // using its TRUE ring (mapping override if mapped, else its own
+  // calculated ring) — this is the full universe of outlets in that
+  // Depo+Ring, mapped and unmapped alike, matching the same Line/RO
+  // definition used on the main Dashboard.
+  const lineRoByDepoRing = useMemo(() => {
+    const groups = new Map<string, { totalSku: number; count: number }>();
+    performance.forEach((p) => {
+      const ring = codeToMappingRing.get(p.kodeCustNfiGroup) || p.calculatedRing;
+      const key = `${p.depo}|${ring}`;
+      const g = groups.get(key) || { totalSku: 0, count: 0 };
+      g.totalSku += p.sku2026 || 0;
+      g.count += 1;
+      groups.set(key, g);
+    });
+    const result = new Map<string, number>();
+    groups.forEach((g, key) => result.set(key, g.count > 0 ? g.totalSku / g.count : 0));
+    return result;
+  }, [performance, codeToMappingRing]);
+
   const bspSearchPool = useMemo(() => {
     let pool = performance.filter((p) => p.dist === 'BSP' && !codesUsedElsewhere.has(p.kodeCustNfiGroup));
     if (!isManager && accessibleDepo.length > 0) {
@@ -1141,6 +1190,46 @@ export const MappingManagement: React.FC = () => {
     e.target.value = '';
   };
 
+  // Renders one distributor side's Performance block (SKU/PA/%PA/Avg Sales/
+  // F12/F3) for the "Performance" column — SKU is colour-coded against that
+  // outlet's own Depo+Ring Line/RO benchmark: below = red, at = amber,
+  // above = green.
+  const renderPerfBlock = (
+    perf: OutletPerformance | undefined,
+    label: string,
+    badgeClass: string,
+    mappingRing: string
+  ) => {
+    if (!perf) {
+      return (
+        <div className="flex items-center gap-1.5">
+          <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${badgeClass}`}>{label}</span>
+          <span className="text-slate-400 italic text-[11px]">-</span>
+        </div>
+      );
+    }
+    const lineRo = lineRoByDepoRing.get(`${perf.depo}|${mappingRing}`) || 0;
+    const skuColor =
+      perf.sku2026 < lineRo ? 'text-rose-600' : perf.sku2026 === lineRo ? 'text-amber-600' : 'text-emerald-600';
+    return (
+      <div>
+        <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${badgeClass}`}>{label}</span>
+        <div className="text-[11px] text-slate-600 mt-0.5 leading-relaxed">
+          <div>
+            SKU: <span className={`font-bold ${skuColor}`}>{perf.sku2026}</span>
+          </div>
+          <div>
+            PA: {perf.avgPa2026.toFixed(1)} ({perf.pa2026.toFixed(0)}%)
+          </div>
+          <div>Avg Sales: Rp {perf.avgSales2026.toLocaleString('id-ID')}</div>
+          <div>
+            F12: {perf.fLast12m} • F3: {perf.f3}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6">
       {/* Top Bar */}
@@ -1314,33 +1403,23 @@ export const MappingManagement: React.FC = () => {
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200 text-slate-700 font-semibold">
-                <th className="py-3 px-3 cursor-pointer select-none whitespace-nowrap" onClick={() => handleMapSort('ring')}>
-                  <div className="flex items-center gap-1">
+                <th className="py-3 px-3 cursor-pointer select-none w-20" onClick={() => handleMapSort('ring')}>
+                  <div className="flex items-center gap-1 whitespace-normal leading-tight">
                     Classification Outlet <SortIcon field="ring" />
                   </div>
                 </th>
                 <th className="py-3 px-3 cursor-pointer select-none whitespace-nowrap" onClick={() => handleMapSort('name')}>
                   <div className="flex items-center gap-1">
-                    Customer SO Group Area &amp; Area <SortIcon field="name" />
-                  </div>
-                </th>
-                <th className="py-3 px-3 cursor-pointer select-none whitespace-nowrap" onClick={() => handleMapSort('code')}>
-                  <div className="flex items-center gap-1">
-                    Customer SO Group Area Code <SortIcon field="code" />
+                    Customer SO Group Area <SortIcon field="name" />
                   </div>
                 </th>
                 <th className="py-3 px-3 cursor-pointer select-none whitespace-nowrap" onClick={() => handleMapSort('bsp')}>
                   <div className="flex items-center gap-1">
-                    Kode BSP (1/2/3) <SortIcon field="bsp" />
+                    Customer Distributor <SortIcon field="bsp" />
                   </div>
                 </th>
-                <th className="py-3 px-3 cursor-pointer select-none whitespace-nowrap" onClick={() => handleMapSort('udn')}>
-                  <div className="flex items-center gap-1">
-                    Kode UDN (1/2/3) <SortIcon field="udn" />
-                  </div>
-                </th>
-                <th className="py-3 px-3 text-center whitespace-nowrap">Sarana POSM</th>
-                <th className="py-3 px-3 text-center whitespace-nowrap">Display Wow</th>
+                <th className="py-3 px-3 text-center whitespace-nowrap">Performance</th>
+                <th className="py-3 px-3 text-center whitespace-nowrap">Investment Type</th>
                 <th className="py-3 px-3 text-center cursor-pointer select-none whitespace-nowrap" onClick={() => handleMapSort('mds')}>
                   <div className="flex items-center justify-center gap-1">
                     MDS &amp; PIC <SortIcon field="mds" />
@@ -1352,7 +1431,7 @@ export const MappingManagement: React.FC = () => {
             <tbody className="divide-y divide-slate-100">
               {sortedMappings.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="text-center py-8 text-slate-400">
+                  <td colSpan={10} className="text-center py-8 text-slate-400">
                     Belum ada data mapping yang sesuai. Klik "Tambah Mapping Baru" untuk membuat.
                   </td>
                 </tr>
@@ -1383,10 +1462,12 @@ export const MappingManagement: React.FC = () => {
                       </td>
                       <td className="py-3 px-3 whitespace-nowrap">
                         <div className="font-bold text-slate-900">{m.customerSoGroupArea}</div>
+                        <div className="font-mono font-bold text-slate-700 text-[11px] mt-0.5">
+                          {m.customerSoGroupAreaCode}
+                        </div>
+                        <div className="text-[11px] text-slate-400 mt-0.5">{m.kecamatan}</div>
                         <div className="text-[11px] text-slate-400 flex items-center gap-1">
-                          <span>
-                            {m.kecamatan}, {m.kabupaten}
-                          </span>
+                          <span>{m.kabupaten}</span>
                           {m.latitude && m.longitude && (
                             <a
                               href={`https://www.google.com/maps/search/?api=1&query=${m.latitude},${m.longitude}`}
@@ -1401,37 +1482,68 @@ export const MappingManagement: React.FC = () => {
                           )}
                         </div>
                       </td>
-                      <td className="py-3 px-3 font-mono font-bold text-slate-900 whitespace-nowrap text-[11px]">
-                        {m.customerSoGroupAreaCode}
-                      </td>
-                      <td className="py-3 px-3 whitespace-nowrap">
-                        {m.bspCode1 ? (
-                          <div>
-                            <div className="font-semibold text-slate-800">{m.namaCustomerBsp}</div>
-                            <div className="text-[11px] font-mono text-slate-500">
-                              {m.bspCode1}
-                              {m.bspCode2 ? `, ${m.bspCode2}` : ''}
+                      <td className="py-3 px-3">
+                        <div className="space-y-2">
+                          {m.bspCode1 ? (
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-sky-100 text-sky-800">
+                                  BSP
+                                </span>
+                                <span className="font-semibold text-slate-800">{m.namaCustomerBsp}</span>
+                              </div>
+                              <div className="text-[11px] font-mono text-slate-500 mt-0.5">
+                                {[m.bspCode1, m.bspCode2, m.bspCode3].filter(Boolean).join(', ')}
+                              </div>
                             </div>
-                          </div>
-                        ) : (
-                          <span className="text-slate-400 italic">Tidak ada</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-3 whitespace-nowrap">
-                        {m.udnCode1 ? (
-                          <div>
-                            <div className="font-semibold text-slate-800">{m.namaCustomerUdn}</div>
-                            <div className="text-[11px] font-mono text-slate-500">
-                              {m.udnCode1}
-                              {m.udnCode2 ? `, ${m.udnCode2}` : ''}
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-sky-100 text-sky-800">
+                                BSP
+                              </span>
+                              <span className="text-slate-400 italic text-[11px]">Tidak ada</span>
                             </div>
-                          </div>
-                        ) : (
-                          <span className="text-slate-400 italic">Tidak ada</span>
-                        )}
+                          )}
+                          {m.udnCode1 ? (
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-rose-100 text-rose-800">
+                                  UDN
+                                </span>
+                                <span className="font-semibold text-slate-800">{m.namaCustomerUdn}</span>
+                              </div>
+                              <div className="text-[11px] font-mono text-slate-500 mt-0.5">
+                                {[m.udnCode1, m.udnCode2, m.udnCode3].filter(Boolean).join(', ')}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-rose-100 text-rose-800">
+                                UDN
+                              </span>
+                              <span className="text-slate-400 italic text-[11px]">Tidak ada</span>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3 px-3">
+                        <div className="space-y-2">
+                          {renderPerfBlock(
+                            m.bspCode1 ? performanceByCode.get(m.bspCode1) : undefined,
+                            'BSP',
+                            'bg-sky-100 text-sky-800',
+                            m.klasifikasiOutlet
+                          )}
+                          {renderPerfBlock(
+                            m.udnCode1 ? performanceByCode.get(m.udnCode1) : undefined,
+                            'UDN',
+                            'bg-rose-100 text-rose-800',
+                            m.klasifikasiOutlet
+                          )}
+                        </div>
                       </td>
                       <td className="py-3 px-3 text-center">
-                        <div className="flex flex-wrap gap-1 justify-center max-w-[160px] mx-auto">
+                        <div className="flex flex-col items-center gap-1 w-fit mx-auto">
                           {m.dishub && (
                             <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700">
                               Dishub
@@ -1467,32 +1579,24 @@ export const MappingManagement: React.FC = () => {
                               Custom
                             </span>
                           )}
-                          {!m.dishub && !hasAnyRak && (
+                          {m.displayWowAll && (
+                            <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-amber-50 text-amber-700">
+                              Wow All ({m.biayaDisplayWow.toLocaleString('id-ID')} Rcg)
+                            </span>
+                          )}
+                          {m.displayWowHilo && (
+                            <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-amber-50 text-amber-700">
+                              Wow Hilo ({m.biayaDisplayWowHilo.toLocaleString('id-ID')} Rcg)
+                            </span>
+                          )}
+                          {!m.dishub && !hasAnyRak && !m.displayWowAll && !m.displayWowHilo && (
                             <span className="text-slate-400 text-[11px]">-</span>
                           )}
                         </div>
                       </td>
-                      <td className="py-3 px-3 text-center whitespace-nowrap">
-                        {m.displayWowAll || m.displayWowHilo ? (
-                          <div className="text-[11px]">
-                            {m.displayWowAll && (
-                              <div className="font-semibold text-amber-700">
-                                Wow All ({m.biayaDisplayWow.toLocaleString('id-ID')} Rcg)
-                              </div>
-                            )}
-                            {m.displayWowHilo && (
-                              <div className="font-semibold text-emerald-700">
-                                Wow Hilo ({m.biayaDisplayWowHilo.toLocaleString('id-ID')} Rcg)
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-slate-400 text-[11px]">-</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-3 text-center whitespace-nowrap">
-                        <div className="font-semibold text-slate-800">{m.namaMds || '-'}</div>
-                        <div className="text-[10px] text-slate-400">PIC: {m.pic || '-'}</div>
+                      <td className="py-3 px-3 text-center w-32">
+                        <div className="font-semibold text-slate-800 whitespace-normal">{m.namaMds || '-'}</div>
+                        <div className="text-[10px] text-slate-400 whitespace-normal">PIC: {m.pic || '-'}</div>
                       </td>
                       <td className="py-3 px-3 text-center whitespace-nowrap">
                         <button

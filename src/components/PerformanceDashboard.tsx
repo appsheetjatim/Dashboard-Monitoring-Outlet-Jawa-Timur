@@ -76,7 +76,7 @@ export const PerformanceDashboard: React.FC<Props> = ({
   // Pagination for Tabel Detail Outlet — selectable page size (10/25/50),
   // shared across all paginated tables on this page (Termapping, Belum
   // Termapping per Depo, Coverage, Watchlist).
-  const [pageSize, setPageSize] = useState<number>(50);
+  const [pageSize, setPageSize] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
 
   // Changing how many rows show per page shifts what "page 3" even means,
